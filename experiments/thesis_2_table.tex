@@ -1,0 +1,13 @@
+\begin{table}[htbp]
+\centering
+\caption{Wyniki empiryczne dla Tezy 2: Porownanie strategii adaptacji (Hot-Swap vs Statyczny) w warunkach stopniowego i naglego dryfu koncepcji.}
+\label{tab:thesis_2_drift_results}
+\begin{tabular}{lccccc}
+\toprule
+\textbf{Model / Strategia} & \textbf{Purity przed dryfem} & \textbf{Stopniowy (Post)} & \textbf{Nagly (Post)} & \textbf{Czas rekonwalescencji ($t_{rec}$)} & \textbf{Rekomendowane zastosowanie} \\
+\midrule
+Statyczny (Brak adaptacji) & 87.7\% & 79.5\% & 92.3\% & Brak powrotu & Strumienie stacjonarne \\
+\textbf{Adaptacja Hot-Swap (NSGA-II) $\star$} & \textbf{87.7\%} & \textbf{79.3\%} & \textbf{87.7\%} & \textbf{0 dokumentow (Natychmiastowy)} & \textbf{Nagly / gleboki dryf} \\
+\bottomrule
+\end{tabular}
+\end{table}

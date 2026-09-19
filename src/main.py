@@ -60,27 +60,38 @@ def setup_command():
 
 
 @app.command(name="ingest")
-def ingest_command():
+def ingest_command(
+    batch_size: int = typer.Option(config.kafka.batch_size, help="Batch size for Kafka messages"),
+    interval: float = typer.Option(0.5, help="Interval in seconds between batches"),
+    drift_step: int = typer.Option(3000, help="Message index where concept drift occurs"),
+    drift_type: str = typer.Option("sudden", help="Type of drift: sudden, gradual, recurring"),
+):
     """Start the data ingestion process."""
-    typer.echo("Starting ingestion...")
+    typer.echo(f"Starting ingestion (drift_type={drift_type}, drift_step={drift_step})...")
     producer = StreamProducer(bootstrap_servers=config.kafka.bootstrap_servers)
     prototype = IngesterPrototype(
         topic=config.kafka.topic.raw_messages,
         text_column=config.dataset.text_column,
-        batch_size=config.kafka.batch_size,
+        label_column=config.kafka.event.text_column if hasattr(config.kafka.event, "label_column") else "label",
+        batch_size=batch_size,
+        batch_interval=interval,
+        drift_step=drift_step,
+        drift_type=drift_type,
     )
     app_instance = IngesterApp(producer=producer, prototype=prototype)
     app_instance.run()
 
 
-
 @app.command(name="daemon")
-def run_daemon_command():
+def run_daemon_command(
+    use_pca: bool = typer.Option(config.ml.use_pca, help="Enable IncrementalPCA dimensionality reduction"),
+    pca_dim: int = typer.Option(config.ml.pca_components_num, help="Target PCA dimensions"),
+):
     """
     Core clustering daemon.
-    Performs preprocessing + clustering.
+    Performs preprocessing + online embedding transformation + two-phase stream clustering.
     """
-    typer.echo("Starting clustering daemon...")
+    typer.echo(f"Starting clustering daemon (use_pca={use_pca}, pca_dim={pca_dim})...")
 
     consumer = StreamConsumer(
         bootstrap_servers=config.kafka.bootstrap_servers,
@@ -91,16 +102,28 @@ def run_daemon_command():
     storage = get_db_admin()
 
     preprocessor = TextPreprocessor()
+    pca_instance = IncrementalPCA(n_components=pca_dim) if use_pca else None
     transformer = EmbeddingTransformer(
         encoder=SentenceTransformer(config.ml.embedding_model),
-        pca=IncrementalPCA(n_components=config.ml.pca_components_num),
+        pca=pca_instance,
     )
-    clusterer = StreamClusterer(model=cluster.DenStream(**config.denstream_params))
+
+    denstream_model = cluster.DenStream(
+        decaying_factor=config.denstream.decaying_factor,
+        epsilon=config.denstream.epsilon,
+        mu=config.denstream.mu,
+    )
+    clusterer = StreamClusterer(
+        model=denstream_model,
+        offline_eps=config.denstream.offline_eps,
+        offline_min_samples=config.denstream.offline_min_samples,
+    )
 
     prototype = DaemonPrototype(
         batch_size=config.kafka.batch_size,
         timeout=config.kafka.timeout,
         text_column=config.dataset.text_column,
+        label_column="label",
         results_table=config.postgres.tables.results,
     )
 
@@ -115,10 +138,42 @@ def run_daemon_command():
     daemon.run()
 
 
+@app.command(name="ui")
+def run_ui_command():
+    """Launch the interactive Streamlit defense presentation UI."""
+    import subprocess
+    import sys
+    typer.echo("Launching interactive Streamlit live defense presentation...")
+    subprocess.run([sys.executable, "-m", "streamlit", "run", "src/apps/web_ui.py"])
+
+
+@app.command(name="benchmark-thesis-1")
+def benchmark_thesis_1_command():
+    """Run Thesis 1 benchmark: SBERT + IPCA vs Full Dimensionality."""
+    from experiments.exp_thesis_1_ipca import main as run_exp1
+    run_exp1()
+
+
+@app.command(name="benchmark-thesis-2")
+def benchmark_thesis_2_command():
+    """Run Thesis 2 benchmark: NSGA-II Reactive Concept Drift Self-Adaptation."""
+    from experiments.exp_thesis_2_drift import run_drift_experiment
+    run_drift_experiment()
+
+
+@app.command(name="benchmark-thesis-3")
+def benchmark_thesis_3_command():
+    """Run Thesis 3 benchmark: Multi-Objective Pareto Front & Knee Point Analysis."""
+    from experiments.exp_thesis_3_pareto import run_pareto_analysis
+    run_pareto_analysis()
+
+
 @app.command(name="hello")
 def hello_command():
-    typer.echo("Hello world!")
+    typer.echo("Hello evoStream!")
 
 
 if __name__ == "__main__":
     app()
+
+

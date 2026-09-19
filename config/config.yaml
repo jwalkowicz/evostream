@@ -1,0 +1,78 @@
+kafka:
+  bootstrap_servers: "localhost:29092"
+  num_partitions: 3
+  replication_factor: 1
+  topic:
+    raw_messages: "raw_messages"
+    embeddings: "embeddings"
+  event:
+    text_column: "text"
+    vector_column: "embedding"
+  consumers:
+    preprocessor_group: "preprocessor_group"
+    clusterer_group: "clusterer_group"
+    offset_reset: "earliest"
+  timeout: 1.0
+  batch_size: 64
+
+dataset:
+  name: "20newsgroups"
+  categories_concept_a: ["sci.space", "sci.med", "rec.autos"]
+  categories_concept_b: ["rec.sport.baseball", "comp.sys.ibm.pc.hardware", "talk.politics.mideast"]
+  categories_concept_c: ["comp.graphics", "soc.religion.christian", "sci.crypt"]
+  max_samples_per_concept: 1000
+  text_column: "text"
+
+ml:
+  embedding_model: "all-MiniLM-L6-v2"
+  pca_components_num: 16
+  use_pca: true
+
+denstream:
+  epsilon: 0.10
+  mu: 2
+  beta: 0.75
+  decaying_factor: 0.005
+  offline_eps: 0.70
+  offline_min_samples: 1
+  window_size: 300
+  n_samples_init: 1
+  eps_percentile: 0.40
+  eps_scale: 1.8
+
+drift:
+  window_size: 20
+  min_warmup_steps: 5
+  quality_drop_sigma: 2.0
+  outlier_surge_threshold: 0.30
+  cooldown_steps: 8
+  centroid_shift_threshold: 0.30
+  divergence_threshold: 0.25
+
+seed: 42
+
+evolution:
+  seed: 42
+  population_size: 32
+  generations: 12
+  crossover_rate: 0.8
+  crossover_eta: 15.0
+  mutation_rate: 0.2
+  mutation_eta: 20.0
+  fixed_mu: 2
+  beta: 0.75
+  n_samples_init: 1
+  min_eval_buffer: 40
+  param_bounds:
+    epsilon: [0.05, 0.15]
+    decaying_factor: [0.005, 0.08]
+
+postgres:
+  user: "user"
+  password: "password"
+  db: "evostream-db"
+  host: "localhost"
+  port: 5432
+  tables:
+    params: "model_parameters"
+    results: "clustering_results"
