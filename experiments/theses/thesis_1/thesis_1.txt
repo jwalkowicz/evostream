@@ -1,0 +1,1 @@
+•	Teza 1 – integracja głębokich osadzeń semantycznych SBERT z przyrostową redukcją wymiarowości (IPCA) w fazie online pozwala na zachowanie spójności i czystości wykrywanych klastrów tematycznych przy jednoczesnym wielokrotnym skróceniu czasu przetwarzania dokumentu w porównaniu z klasteryzacją w przestrzeni pełnowymiarowej,

@@ -30,22 +30,21 @@ flowchart TD
     end
 
     subgraph OfflineLayer ["Faza agregacji makroklastrów"]
-        DBSCAN["Agregacja makroklastrów<br>(DBSCAN)"]:::offline
+        Agglom["Agregacja makroklastrów<br>(Grupowanie hierarhiczne)"]:::offline
     end
 
     Kafka -->|"Strumień dokumentów"| Preproc
     Kafka -.->|"Dane do okna optymalizacji"| Buffer
 
     DriftDet -->|"1. Zgłoszenie dryfu"| NSGA
-    DenStream -....->|"Aktualny stan mikroklastrów<br>"| DBSCAN
+    DenStream -.->|"&nbsp;&nbsp;Aktualny stan mikroklastrów"| Agglom
     
     NSGA -->|"3. Aktualizacja konfiguracji"| DenStream
-    NSGA -->|"3. Aktualizacja konfiguracji"| DBSCAN
 
     DB[("Warstwa persystencji<br>(PostgreSQL)")]:::db
     
     DriftDet -->|"Logowanie zdarzeń"| DB
-    DBSCAN -->|"Archiwizacja makroklastrów"| DB
+    Agglom -->|"Archiwizacja makroklastrów"| DB
     NSGA -->|"Zapis najlepszych konfiguracji"| DB
 
     linkStyle default stroke:slategray,stroke-width:2px,color:black

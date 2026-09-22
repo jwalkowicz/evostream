@@ -5,26 +5,25 @@ from dataclasses import dataclass
 from typing import List, Tuple
 
 from sklearn.datasets import fetch_20newsgroups
+
 from src.core.logger import logger
 
 
 @dataclass
 class IngesterPrototype:
-    """Blueprint for the ingester configuration."""
-
     topic: str
     text_column: str
     label_column: str = "label"
     batch_size: int = 64
     batch_interval: float = 0.5
     drift_step: int = 3000
-    drift_type: str = "sudden"  # "sudden", "gradual", "recurring"
+    drift_type: str = "sudden"
 
 
 class IngesterApp:
     """
     Simulates a text data stream using the 20 Newsgroups dataset.
-    Implements concept drift by switching or blending categories dynamically.
+    Implements concept drift.
     Attaches ground-truth category labels to each message for evaluation.
     """
 
@@ -35,7 +34,6 @@ class IngesterApp:
         self.message_count = 0
 
     def _load_data_with_labels(self, categories: List[str]) -> List[Tuple[str, str]]:
-        """Fetches and pairs data with category labels."""
         logger.info(f"Loading data for categories: {categories}")
         dataset = fetch_20newsgroups(
             subset="all",
@@ -61,11 +59,11 @@ class IngesterApp:
         signal.signal(signal.SIGINT, self.handle_shutdown)
         signal.signal(signal.SIGTERM, self.handle_shutdown)
 
-        # Initial Concept (Topics A, B, C)
+        # initial concept
         phase1_categories = ["sci.space", "sci.med", "rec.autos"]
         phase1_data = self._load_data_with_labels(phase1_categories)
 
-        # Drift Concept (Topics D, E, F)
+        # drift cncept
         phase2_categories = [
             "rec.sport.baseball",
             "comp.sys.ibm.pc.hardware",
@@ -78,36 +76,17 @@ class IngesterApp:
 
         try:
             while self.running:
-                # Select data source based on message count and drift type
                 if self.prototype.drift_type == "sudden":
                     if self.message_count < self.prototype.drift_step:
                         current_pool = phase1_data
                     else:
                         if not drift_logged:
                             logger.warning(
-                                f"=== CONCEPT DRIFT TRIGGERED AT MSG {self.message_count} (SUDDEN) ==="
+                                f"Concept drift triggered at message count {self.message_count}"
                             )
                             drift_logged = True
                         current_pool = phase2_data
 
-                elif self.prototype.drift_type == "gradual":
-                    # Transition window between drift_step and drift_step + 2000
-                    transition_start = self.prototype.drift_step
-                    transition_end = self.prototype.drift_step + 2000
-                    if self.message_count < transition_start:
-                        current_pool = phase1_data
-                    elif self.message_count >= transition_end:
-                        current_pool = phase2_data
-                    else:
-                        prob_phase2 = (self.message_count - transition_start) / 2000.0
-                        current_pool = phase2_data if random.random() < prob_phase2 else phase1_data
-
-                else:  # Recurring / Default
-                    # Switch concepts every 2500 messages
-                    cycle = (self.message_count // 2500) % 2
-                    current_pool = phase1_data if cycle == 0 else phase2_data
-
-                # Create a batch
                 batch = []
                 for _ in range(self.prototype.batch_size):
                     text, label = random.choice(current_pool)
@@ -121,7 +100,6 @@ class IngesterApp:
                     )
                     self.message_count += 1
 
-                # Send batch to Kafka
                 for msg in batch:
                     self.producer.send(topic=self.prototype.topic, value=msg)
 
@@ -136,4 +114,3 @@ class IngesterApp:
         finally:
             self.producer.close()
             logger.info("Ingester shutdown complete.")
-

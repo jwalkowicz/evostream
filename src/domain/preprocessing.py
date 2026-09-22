@@ -9,8 +9,6 @@ from sklearn.decomposition import IncrementalPCA
 
 
 class TextPreprocessor:
-    """Handles low-level text cleaning and normalization."""
-
     def clean(self, text: str) -> str:
         """Removes HTML, URLs, punctuation, and normalizes whitespace."""
         if not text or not isinstance(text, str):
@@ -25,7 +23,6 @@ class TextPreprocessor:
         return text
 
     def clean_batch(self, texts: List[str]) -> List[str]:
-        """Cleans a batch of texts."""
         return [self.clean(t) for t in texts]
 
 
@@ -36,11 +33,6 @@ class EmbeddingTransformer(BaseEstimator, TransformerMixin):
     """
 
     def __init__(self, encoder, pca: Optional[IncrementalPCA] = None):
-        """
-        Args:
-            encoder: A sentence encoding model (e.g., SentenceTransformer).
-            pca: An optional IncrementalPCA model for online projection.
-        """
         self.encoder = encoder
         self.pca = pca
         self.warmup_buffer: List[np.ndarray] = []
@@ -48,7 +40,6 @@ class EmbeddingTransformer(BaseEstimator, TransformerMixin):
 
     @property
     def output_dim(self) -> int:
-        """Returns the dimensionality of the transformed representations."""
         if self.pca is not None:
             return self.pca.n_components
         if hasattr(self.encoder, "get_sentence_embedding_dimension"):
@@ -59,7 +50,6 @@ class EmbeddingTransformer(BaseEstimator, TransformerMixin):
         return self
 
     def _update_pca_with_buffer(self, embeddings: np.ndarray):
-        """Buffers embeddings until reaching n_components before the first partial_fit."""
         if self.pca is None:
             return
 
@@ -75,7 +65,6 @@ class EmbeddingTransformer(BaseEstimator, TransformerMixin):
                 self.pca.partial_fit(embeddings)
 
     def transform(self, X: List[str]) -> np.ndarray:
-        """Encodes texts to dense embeddings and applies PCA if configured."""
         if not X:
             return np.empty((0, self.output_dim))
 
@@ -92,7 +81,6 @@ class EmbeddingTransformer(BaseEstimator, TransformerMixin):
         return embeddings
 
     def fit_transform(self, X: List[str], y=None, **fit_params) -> np.ndarray:
-        """Encodes texts, incrementally updates PCA, and returns transformed embeddings."""
         if not X:
             return np.empty((0, self.output_dim))
 

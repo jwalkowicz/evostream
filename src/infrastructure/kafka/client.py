@@ -1,8 +1,8 @@
 import json
 
 from confluent_kafka import Consumer, Producer
-from confluent_kafka.admin import AdminClient, KafkaError, KafkaException
-from confluent_kafka.admin import NewTopic
+from confluent_kafka.admin import AdminClient, KafkaError, KafkaException, NewTopic
+
 from src.core.logger import logger
 
 
@@ -10,30 +10,17 @@ class StreamAdmin:
     """Kafka administrator client for managing topics."""
 
     def __init__(self, bootstrap_servers: str):
-        """
-        Initializes the AdminClient.
-
-        Args:
-            bootstrap_servers (str): Comma-separated string of Kafka brokers.
-        """
         self.admin = AdminClient({"bootstrap.servers": bootstrap_servers})
-        
+
     def setup_topic(self, name, num_partitions, replication_factor):
         topic = NewTopic(
             topic=name,
             num_partitions=num_partitions,
-            replication_factor=replication_factor
+            replication_factor=replication_factor,
         )
         self.create_topics([topic])
 
     def create_topics(self, topics: list):
-        """
-        Creates the required Kafka topics if they do not exist.
-
-        Args:
-            topics (list): List of confluent_kafka.admin.NewTopic objects.
-        """
-
         topics_futures = self.admin.create_topics(topics)
 
         for topic_name, future in topics_futures.items():
@@ -55,12 +42,6 @@ class StreamProducer:
     """Kafka producer client for sending messages."""
 
     def __init__(self, bootstrap_servers: str):
-        """
-        Initializes the Producer.
-
-        Args:
-            bootstrap_servers (str): Comma-separated string of Kafka brokers.
-        """
         self.producer = Producer({"bootstrap.servers": bootstrap_servers})
         logger.info(f"Kafka Producer initialized at {bootstrap_servers}")
 
@@ -70,13 +51,11 @@ class StreamProducer:
             logger.error(f"Failed to deliver message: {err}")
 
     def send(self, topic: str, value: dict):
-        """Serializes dict to JSON, encodes to UTF-8, and produces."""
         value_encoded = json.dumps(value).encode("utf-8")
         self.producer.produce(topic, value=value_encoded, callback=self._acked)
         self.producer.poll(0)
 
     def close(self):
-        """Ensures all messages are sent before shutting down."""
         logger.info("Flushing remaining messages...")
         self.producer.flush()
         logger.info("Producer successfully closed.")
@@ -88,15 +67,6 @@ class StreamConsumer:
     def __init__(
         self, bootstrap_servers: str, group_id: str, topics: list, offset_reset: str
     ):
-        """
-        Initializes the Consumer.
-
-        Args:
-            bootstrap_servers (str): Comma-separated string of Kafka brokers.
-            group_id (str): Consumer group ID.
-            topics (list): List of topics to subscribe to.
-            offset_reset (str): Strategy for resetting offsets
-        """
         self.consumer = Consumer(
             {
                 "bootstrap.servers": bootstrap_servers,
@@ -108,14 +78,11 @@ class StreamConsumer:
         self.consumer.subscribe(topics)
 
     def consume(self, batch_size: int, timeout: float):
-        """Consumes a batch of messages."""
         return self.consumer.consume(batch_size, timeout=timeout)
 
     def commit(self):
-        """Manually commits the current offsets."""
         self.consumer.commit(asynchronous=True)
 
     def close(self):
-        """Closes the consumer connection."""
         self.consumer.close()
         logger.info("Consumer successfully closed.")

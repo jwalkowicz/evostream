@@ -1,0 +1,1 @@
+•	Teza 3 – istnieje stabilny kompromis Pareto pomiędzy jakością klasteryzacji a złożonością obliczeniową, którego przebieg stabilizuje się w niskich wymiarach rzutowania oraz przy specyficznych stosunkach liczby mikro-klastrów do makro-klastrów.

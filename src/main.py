@@ -61,18 +61,22 @@ def setup_command():
 
 @app.command(name="ingest")
 def ingest_command(
-    batch_size: int = typer.Option(config.kafka.batch_size, help="Batch size for Kafka messages"),
-    interval: float = typer.Option(0.5, help="Interval in seconds between batches"),
-    drift_step: int = typer.Option(3000, help="Message index where concept drift occurs"),
-    drift_type: str = typer.Option("sudden", help="Type of drift: sudden, gradual, recurring"),
+    batch_size: int = typer.Option(config.kafka.batch_size),
+    interval: float = typer.Option(0.5),
+    drift_step: int = typer.Option(3000),
+    drift_type: str = typer.Option("sudden"),
 ):
     """Start the data ingestion process."""
-    typer.echo(f"Starting ingestion (drift_type={drift_type}, drift_step={drift_step})...")
+    typer.echo(
+        f"Starting ingestion (drift_type={drift_type}, drift_step={drift_step})..."
+    )
     producer = StreamProducer(bootstrap_servers=config.kafka.bootstrap_servers)
     prototype = IngesterPrototype(
         topic=config.kafka.topic.raw_messages,
         text_column=config.dataset.text_column,
-        label_column=config.kafka.event.text_column if hasattr(config.kafka.event, "label_column") else "label",
+        label_column=config.kafka.event.text_column
+        if hasattr(config.kafka.event, "label_column")
+        else "label",
         batch_size=batch_size,
         batch_interval=interval,
         drift_step=drift_step,
@@ -84,8 +88,8 @@ def ingest_command(
 
 @app.command(name="daemon")
 def run_daemon_command(
-    use_pca: bool = typer.Option(config.ml.use_pca, help="Enable IncrementalPCA dimensionality reduction"),
-    pca_dim: int = typer.Option(config.ml.pca_components_num, help="Target PCA dimensions"),
+    use_pca: bool = typer.Option(config.ml.use_pca),
+    pca_dim: int = typer.Option(config.ml.pca_components_num),
 ):
     """
     Core clustering daemon.
@@ -140,24 +144,25 @@ def run_daemon_command(
 
 @app.command(name="ui")
 def run_ui_command():
-    """Launch the interactive Streamlit defense presentation UI."""
     import subprocess
     import sys
-    typer.echo("Launching interactive Streamlit live defense presentation...")
+
     subprocess.run([sys.executable, "-m", "streamlit", "run", "src/apps/web_ui.py"])
 
 
 @app.command(name="benchmark-thesis-1")
 def benchmark_thesis_1_command():
     """Run Thesis 1 benchmark: SBERT + IPCA vs Full Dimensionality."""
-    from experiments.exp_thesis_1_ipca import main as run_exp1
+    from experiments.theses.thesis_1.exp_thesis_1_ipca import main as run_exp1
+
     run_exp1()
 
 
 @app.command(name="benchmark-thesis-2")
 def benchmark_thesis_2_command():
     """Run Thesis 2 benchmark: NSGA-II Reactive Concept Drift Self-Adaptation."""
-    from experiments.exp_thesis_2_drift import run_drift_experiment
+    from experiments.theses.thesis_2.exp_thesis_2_drift import run_drift_experiment
+
     run_drift_experiment()
 
 
@@ -165,6 +170,7 @@ def benchmark_thesis_2_command():
 def benchmark_thesis_3_command():
     """Run Thesis 3 benchmark: Multi-Objective Pareto Front & Knee Point Analysis."""
     from experiments.exp_thesis_3_pareto import run_pareto_analysis
+
     run_pareto_analysis()
 
 
@@ -175,5 +181,3 @@ def hello_command():
 
 if __name__ == "__main__":
     app()
-
-

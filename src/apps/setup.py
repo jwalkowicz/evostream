@@ -6,8 +6,6 @@ from src.core.logger import logger
 
 @dataclass
 class TopicPrototype:
-    """Blueprint for a Kafka topic."""
-
     name: str
     num_partitions: int
     replication_factor: int

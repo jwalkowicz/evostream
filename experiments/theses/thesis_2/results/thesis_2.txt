@@ -1,0 +1,1 @@
+•	Teza 2 – zastosowanie wielokryterialnej optymalizacji ewolucyjnej (NSGA-II) umożliwia skuteczną, tzw. „ślepą” adaptację parametrów systemu do zjawiska dryfu pojęcia bez konieczności interwencji użytkownika i manualnego redefiniowania progów detekcji,

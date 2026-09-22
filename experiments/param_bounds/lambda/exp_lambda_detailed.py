@@ -8,7 +8,6 @@ from river.cluster import DenStream
 MU = 2
 BETA = 0.75
 EPSILON = 0.10
-DECAYING_FACTOR = 0.005
 STREAM_SPEED = 1
 N_SAMPLES_LIMIT = 1
 

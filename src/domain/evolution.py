@@ -1,5 +1,4 @@
 import time
-import warnings
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -17,13 +16,9 @@ from sklearn.metrics import silhouette_score
 from src.core.config import config
 from src.core.logger import logger
 
-warnings.filterwarnings("ignore", category=RuntimeWarning)
-
 
 @dataclass
 class Individual:
-    """Represents a candidate parameter configuration in the population."""
-
     params: Dict[str, float]
     objectives: np.ndarray = field(default_factory=lambda: np.zeros(2))
     rank: int = 0
@@ -32,7 +27,6 @@ class Individual:
     complexity_score: float = 0.0
 
     def dominates(self, other: "Individual") -> bool:
-        """Pareto domination test (Minimization for both objectives)."""
         return bool(
             np.all(self.objectives <= other.objectives)
             and np.any(self.objectives < other.objectives)
@@ -48,8 +42,8 @@ class Individual:
 
 class StreamClusteringOptimizationProblem(ElementwiseProblem):
     """
-    Pymoo multi-objective optimization problem for streaming text clustering.
-    Strictly 2D Chromosome: theta = (epsilon, decaying_factor) in R^2.
+    Multi-objective optimization problem for streaming text clustering.
+    2D chromosome: theta = (epsilon, decaying_factor) in R^2.
 
     Objectives:
       1. f1(theta) = -Q_tilde(theta)
@@ -134,11 +128,6 @@ class StreamClusteringOptimizationProblem(ElementwiseProblem):
 
 
 class NSGAIIOptimizer:
-    """
-    Pymoo-backed Non-dominated Sorting Genetic Algorithm II (NSGA-II) for multi-criteria
-    optimization.
-    """
-
     def __init__(
         self,
         population_size: int = 16,
@@ -175,31 +164,6 @@ class NSGAIIOptimizer:
         self.xu = np.array(
             [self.param_bounds[k][1] for k in self.param_keys], dtype=np.float64
         )
-
-        logger.info(
-            f"NSGA-II (Pymoo Engine) initialized: pop_size={population_size}, generations={generations}, "
-            f"fixed mu={fixed_mu}, n_samples_init={n_samples_init}, min_eval_buffer={min_eval_buffer}"
-        )
-
-    def compute_divergence(
-        self,
-        current_params: Dict[str, float],
-        new_params: Dict[str, float],
-    ) -> float:
-        """
-        Computes normalized parametric divergence between
-        current parameters and newly proposed NSGA-II parameters.
-        """
-        sum_sq = 0.0
-        n_params = 0
-        for k in ["epsilon", "decaying_factor"]:
-            if k in self.param_bounds and k in current_params and k in new_params:
-                low, high = self.param_bounds[k]
-                rng = max(high - low, 1e-6)
-                diff = (float(new_params[k]) - float(current_params[k])) / rng
-                sum_sq += diff**2
-                n_params += 1
-        return float(np.sqrt(sum_sq / max(n_params, 1)))
 
     def _create_individual(self, x: np.ndarray, f: np.ndarray) -> Individual:
         eps = round(float(x[0]), 4)
@@ -255,17 +219,12 @@ class NSGAIIOptimizer:
     ) -> Tuple[Individual, List[Individual], List[Dict[str, Any]]]:
         """
         Executes NSGA-II multi-objective evolution on the data buffer.
-        Returns:
-            - best_knee_individual: Compromise Knee Point solution for self-adaptation.
-            - pareto_front: Set of non-dominated individuals on Front 0.
-            - history: Log of convergence statistics and optimization wall-clock latency.
         """
         t_start = time.perf_counter()
 
         if len(data_buffer) < self.min_eval_buffer:
             logger.warning(
                 f"Data buffer size ({len(data_buffer)}) below minimum evaluation threshold ({self.min_eval_buffer}). "
-                f"Maintaining status quo operational parameters."
             )
             fallback_params = self._get_fallback_params(current_params)
             fallback_ind = Individual(params=fallback_params)
@@ -299,7 +258,6 @@ class NSGAIIOptimizer:
         t_end = time.perf_counter()
         opt_latency_ms = round((t_end - t_start) * 1000, 2)
 
-        # Extract Pareto front
         pareto_front: List[Individual] = []
         if res.X is not None and res.F is not None:
             X_arr = np.atleast_2d(res.X)

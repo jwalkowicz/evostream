@@ -37,17 +37,21 @@ denstream:
   offline_min_samples: 1
   window_size: 300
   n_samples_init: 1
+  fix_river_radius: false
   eps_percentile: 0.40
   eps_scale: 1.8
 
 drift:
   window_size: 20
   min_warmup_steps: 5
-  quality_drop_sigma: 2.0
+  quality_drop_sigma: 2.5
   outlier_surge_threshold: 0.30
-  cooldown_steps: 8
-  centroid_shift_threshold: 0.30
+  cooldown_steps: 20
+  centroid_shift_threshold: 0.18
   divergence_threshold: 0.25
+  consecutive_drops_required: 4
+  quality_absolute_floor: 0.08
+  centroid_shift_min_warmup_steps: 40
 
 seed: 42
 

@@ -69,6 +69,7 @@ class DenStreamSettings(BaseModel):
     offline_min_samples: int = 1
     window_size: int = 300
     n_samples_init: int = 1
+    fix_river_radius: bool = False
     adaptive_eps: bool = True
     eps_percentile: float = 0.40
     eps_scale: float = 1.8
@@ -79,8 +80,12 @@ class DriftSettings(BaseModel):
     min_warmup_steps: int = 5
     quality_drop_sigma: float = 2.0
     outlier_surge_threshold: float = 0.30
-    cooldown_steps: int = 8
+    cooldown_steps: int = 20
     divergence_threshold: float = 0.25
+    consecutive_drops_required: int = 2
+    centroid_shift_threshold: float = 0.30
+    quality_absolute_floor: float = 0.08
+    centroid_shift_min_warmup_steps: int = 40
 
 
 class EvolutionSettings(BaseModel):
