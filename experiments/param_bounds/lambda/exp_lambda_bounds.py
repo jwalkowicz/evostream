@@ -8,14 +8,18 @@ receives no new points loses half its weight every 1 / lambda ticks, i.e.
 every stream_speed / lambda documents. The earlier version of this
 experiment used stream_speed = 1, a clock 100x faster than the system's.
 
-The thesis 2 stream (6 categories, abrupt switch to 6 new categories after
-5000 documents, d = 16, IPCA fitted on the first documents) is processed by
-a static clusterer - no drift detection or adaptation - for a grid of lambda
-values, on several stream orders. For each lambda it records:
+The validation stream (4 categories that no thesis experiment uses, abrupt
+switch to 4 other unused categories after 3000 documents, d = 16, IPCA
+fitted on the first documents; see
+experiments/param_bounds/common/validation_stream.py) is processed by a
+static clusterer - no drift detection or adaptation - for a grid of lambda
+values, on several stream orders. The bounds are therefore chosen on data
+completely separate from the data the theses are evaluated on. For each
+lambda it records:
   - clustering quality before the switch (does forgetting hurt a stable
     stream?) and after it (does it help the model let go of old topics?),
   - how many of the p-micro-clusters alive at the switch survive 500, 1000,
-    2500 and 5000 documents later.
+    2000 and 3000 documents later.
 """
 
 import argparse
@@ -29,29 +33,26 @@ import pandas as pd
 from sklearn.decomposition import IncrementalPCA
 from sklearn.preprocessing import normalize
 
-from experiments.theses.thesis_1.exp_thesis_1_ipca import STREAM_SEEDS, shuffle_stream
-from experiments.theses.thesis_2.exp_thesis_2_drift import (
-    BATCH_SIZE,
-    INITIAL_WARMUP_SIZE,
-    PHASE1_CATEGORIES,
-    SAMPLES_PER_PHASE,
-    _load_or_build_dataset,
-    _load_or_compute_embeddings,
+from experiments.param_bounds.common.validation_stream import (
+    VALIDATION_PHASE1_CATEGORIES,
+    VALIDATION_SAMPLES_PER_PHASE as SAMPLES_PER_PHASE,
+    load_validation_stream,
 )
+from experiments.theses.thesis_1.exp_thesis_1_ipca import STREAM_SEEDS, shuffle_stream
+from experiments.theses.thesis_2.exp_thesis_2_drift import BATCH_SIZE, INITIAL_WARMUP_SIZE
 from src.core.config import config
 from src.domain.clustering import StreamClusterer
 
 RESULTS_DIR = "experiments/param_bounds/lambda/results"
 PCA_DIM = 16
 LAMBDA_GRID = [0.001, 0.0025, 0.005, 0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28]
-SURVIVAL_CHECKPOINTS = [500, 1000, 2500, 5000]  # documents after the topic switch
+SURVIVAL_CHECKPOINTS = [500, 1000, 2000, 3000]  # documents after the topic switch
 
 
 def load_drift_stream(seed: int):
-    """Both phases of the thesis 2 stream, each shuffled with the seed; the
+    """Both phases of the validation stream, each shuffled with the seed; the
     topic switch stays at document SAMPLES_PER_PHASE."""
-    texts, labels = _load_or_build_dataset()
-    embeddings = _load_or_compute_embeddings(texts)
+    embeddings, labels = load_validation_stream()
     parts = [
         shuffle_stream(embeddings[start : start + SAMPLES_PER_PHASE], labels[start : start + SAMPLES_PER_PHASE], seed)
         for start in (0, SAMPLES_PER_PHASE)
@@ -69,7 +70,7 @@ def run_one(seed: int, decay: float) -> Tuple[dict, pd.DataFrame]:
         decaying_factor=decay,
         n_samples_init=config.denstream.n_samples_init,
         window_size=config.denstream.window_size,
-        expected_macro_clusters=len(PHASE1_CATEGORIES),
+        expected_macro_clusters=len(VALIDATION_PHASE1_CATEGORIES),
     )
 
     records = []
@@ -140,20 +141,28 @@ def plot_quality(summary: pd.DataFrame, out_path: str):
     plt.close()
 
 
-def plot_survival(timeseries: pd.DataFrame, out_path: str):
+def plot_purity_over_time(timeseries: pd.DataFrame, out_path: str):
+    """Purity of the static model over the stream for the two most extreme
+    lambda values (mean over stream orders): the drop at the topic switch
+    and the lack of recovery, whatever the speed of forgetting."""
     plt.rcParams.update({"font.size": 11, "font.family": "serif"})
-    fig, ax = plt.subplots(figsize=(8, 5))
-    after = timeseries[timeseries["samples_seen"] > SAMPLES_PER_PHASE]
-    mean_curves = after.groupby(["decaying_factor", "samples_seen"])["old_micro_clusters_alive"].mean().reset_index()
-    for decay in LAMBDA_GRID:
-        curve = mean_curves[mean_curves["decaying_factor"] == decay]
-        ax.plot(curve["samples_seen"] - SAMPLES_PER_PHASE, curve["old_micro_clusters_alive"], lw=2, label=f"λ = {decay}")
-    ax.set_xlabel("Liczba dokumentów po zmianie tematów")
-    ax.set_ylabel("Odsetek zachowanych p-mikroklastrów sprzed zmiany")
-    ax.set_title("Zapominanie struktur po zmianie tematów")
-    ax.set_ylim(-0.05, 1.05)
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    extremes = [
+        (min(LAMBDA_GRID), "#2980b9", "-", 3.0),
+        (max(LAMBDA_GRID), "#e67e22", "--", 2.0),
+    ]
+    for decay, color, style, width in extremes:
+        curve = timeseries[timeseries["decaying_factor"] == decay].groupby("samples_seen")["purity"].mean()
+        half_life_docs = f"{round(100 / decay):,}".replace(",", " ")  # e.g. "100 000"
+        ax.plot(curve.index, curve.values, color=color, linestyle=style, lw=width,
+                label=f"λ = {str(decay).replace('.', ',')} (połowa wagi po {half_life_docs} dokumentach)")
+    ax.axvline(SAMPLES_PER_PHASE, color="black", linestyle=":", lw=2, label="Zmiana tematów")
+    ax.set_xlabel("Liczba przetworzonych dokumentów")
+    ax.set_ylabel("Czystość")
+    ax.set_ylim(0, 1)
+    ax.set_xlim(timeseries["samples_seen"].min(), timeseries["samples_seen"].max())
     ax.grid(True, linestyle="--", alpha=0.6)
-    ax.legend(loc="center left", bbox_to_anchor=(1.0, 0.5), fontsize=9)
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.18), ncol=1, frameon=False)
     plt.savefig(out_path, dpi=300, bbox_inches="tight")
     plt.close()
 
@@ -179,7 +188,7 @@ def main():
     timeseries.to_csv(f"{RESULTS_DIR}/lambda_bounds_timeseries.csv", index=False)
     summary.to_csv(f"{RESULTS_DIR}/lambda_bounds_summary.csv", index=False)
     plot_quality(summary, f"{RESULTS_DIR}/lambda_bounds_quality.png")
-    plot_survival(timeseries, f"{RESULTS_DIR}/lambda_bounds_forgetting.png")
+    plot_purity_over_time(timeseries, f"{RESULTS_DIR}/lambda_bounds_purity_over_time.png")
 
     cols = ["decaying_factor", "half_life_docs_mean", "purity_before_switch_mean", "purity_before_switch_std",
             "purity_after_switch_mean", "purity_after_switch_std", "micro_clusters_mean"] + [f"old_alive_after_{d}_mean" for d in SURVIVAL_CHECKPOINTS]

@@ -1,14 +1,15 @@
 """
 Search-space bounds for the DenStream epsilon parameter (thesis section 3.4).
 
-Streams the thesis 1 document stream (the pre-drift phase of thesis 2:
-6 categories, 5000 documents, d = 16) through the full two-phase clusterer
-for a grid of epsilon values and records clustering quality and the number
-of p-micro-clusters. Every epsilon is run at both ends of the decaying-factor
-search range, so the chosen bounds hold whatever lambda NSGA-II picks, and
-on several stream orders to separate real effects from noise. Only pre-drift
-data is used, so the bounds are set without seeing the post-drift topics the
-thesis 2 adaptation is evaluated on.
+Streams the first phase of the validation stream (4 categories that no
+thesis experiment uses, 3000 documents, d = 16; see
+experiments/param_bounds/common/validation_stream.py) through the full
+two-phase clusterer for a grid of epsilon values and records clustering
+quality and the number of p-micro-clusters. The bounds are therefore chosen
+on data completely separate from the data the theses are evaluated on.
+Every epsilon is run at both ends of the decaying-factor search range, so the
+chosen bounds hold whatever lambda NSGA-II picks, and on several stream
+orders to separate real effects from noise.
 """
 
 import argparse
@@ -17,9 +18,12 @@ from concurrent.futures import ProcessPoolExecutor
 
 import pandas as pd
 
+from experiments.param_bounds.common.validation_stream import (
+    VALIDATION_SAMPLES_PER_PHASE,
+    load_validation_stream,
+)
 from experiments.theses.thesis_1.exp_thesis_1_ipca import (
     STREAM_SEEDS,
-    load_phase1_stream,
     run_streaming_simulation,
     shuffle_stream,
 )
@@ -32,7 +36,9 @@ DECAY_VALUES = list(config.evolution.param_bounds["decaying_factor"])
 
 
 def run_one(seed: int, decay: float, epsilon: float) -> dict:
-    _, embeddings, labels = load_phase1_stream()
+    embeddings, labels = load_validation_stream()
+    embeddings = embeddings[:VALIDATION_SAMPLES_PER_PHASE]
+    labels = labels[:VALIDATION_SAMPLES_PER_PHASE]
     df = run_streaming_simulation(
         *shuffle_stream(embeddings, labels, seed), PCA_DIM, epsilon, decaying_factor=decay
     )

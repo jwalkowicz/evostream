@@ -9,6 +9,8 @@ the same 5000-document stream as thesis 1 (the pre-drift phase of thesis 2):
     after projecting to d components and L2-normalising (as in the system);
     it drops as distances concentrate in high dimensions.
 
+All three are computed on the same 5000 documents.
+
 Standard PCA on the whole sample is used here (not IPCA) to obtain exact
 explained-variance values.
 """
@@ -28,8 +30,6 @@ from experiments.theses.thesis_1.exp_thesis_1_ipca import load_phase1_stream
 RESULTS_DIR = "experiments/dimensionality/results"
 DIMS = [2, 4, 8, 16, 24, 32, 48, 64, 96, 128, 256, 384]
 MARKED_DIM = 16
-DCR_SAMPLE_SIZE = 2000
-SEED = 42
 
 
 def intrinsic_dimension_mle(X: np.ndarray, k1: int = 10, k2: int = 20) -> float:
@@ -76,14 +76,13 @@ def main():
 
     pca = PCA(n_components=embeddings.shape[1]).fit(embeddings)
     cumulative_variance = np.cumsum(pca.explained_variance_ratio_)
-    sample = np.random.default_rng(SEED).choice(len(embeddings), DCR_SAMPLE_SIZE, replace=False)
 
     rows = []
     for d in DIMS:
         if d == embeddings.shape[1]:
-            projected = embeddings[sample]
+            projected = embeddings
         else:
-            projected = normalize(pca.transform(embeddings[sample])[:, :d])
+            projected = normalize(pca.transform(embeddings)[:, :d])
         rows.append(
             {
                 "d": d,
