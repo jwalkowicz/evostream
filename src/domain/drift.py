@@ -17,7 +17,7 @@ class UnsupervisedDriftDetector:
 
     An earlier version also monitored the share of outlier micro-cluster
     weight. It never contributed a detection: on the thesis 2 stream that
-    share stayed below ~1% of the total weight even during the engineered
+    share stayed at or below ~2% of the total weight even during the engineered
     drift, far under any reasonable threshold, so it was removed.
     """
 

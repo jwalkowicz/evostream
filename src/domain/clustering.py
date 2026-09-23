@@ -373,6 +373,14 @@ class StreamClusterer:
 
         return metrics_dict
 
+    def ease_decaying_factor(self, target: float, rate: float = 0.9) -> None:
+        """After a model swap: brings a decaying factor raised by NSGA-II back
+        down towards the system's initial value, by `rate` per batch (as in
+        the thesis 2 experiment). Never raises it."""
+        current = self.model.decaying_factor
+        if current > target:
+            self.model.decaying_factor = max(target, current * rate)
+
     def hot_swap_model(
         self,
         new_params: Dict[str, Any],

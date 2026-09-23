@@ -188,6 +188,8 @@ class ClusteringDaemon:
                     self.swap_buffer.extend(embeddings)
                     if len(self.swap_buffer) >= config.evolution.hotswap_buffer_size:
                         self._swap_model()
+                else:
+                    self.clusterer.ease_decaying_factor(config.denstream.decaying_factor)
 
                 if self.storage:
                     try:

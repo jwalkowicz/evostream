@@ -433,6 +433,8 @@ def ingest_batch(current_b_size):
             st.session_state.swap_buffer = []
             st.toast("✅ Wdrożono nowy model (IPCA + DenStream)")
             metrics = st.session_state.clusterer.get_metrics()
+    else:
+        st.session_state.clusterer.ease_decaying_factor(config.denstream.decaying_factor)
 
     st.session_state.history_records.append(
         {

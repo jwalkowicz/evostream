@@ -1,21 +1,16 @@
 """
 Runs the (epsilon x decaying_factor) sweep for the thesis-2 drift experiment
-directly in-process - no shelling out to `uv run python -m ... --eps ...`
+directly in Python - no shelling out to `uv run python -m ... --eps ...`
 per combo - then regenerates all plots.
 
-Concurrency is via a thread pool calling run_drift_experiment() as a normal
-Python function. Note: run_drift_experiment() calls set_seed(42) at the top
-of each run, which reseeds the shared global numpy/random/torch RNG state.
-With more than one worker thread, two runs can genuinely interleave on that
-shared state, so which random draws each run consumes is timing-dependent -
-harmless for a quick sanity check, but for a final, reproducible full sweep
-prefer running with --workers 1, or move to separate processes (each has its
-own isolated RNG state) once the experiment logic itself is settled.
+Each combination runs in its own worker process, so every run has its own
+isolated random-number state (run_drift_experiment() seeds it at the start)
+and the results are reproducible whatever the number of workers.
 """
 
 import argparse
 import itertools
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from typing import List, Tuple
 
 from experiments.theses.thesis_2.exp_thesis_2_drift import (
@@ -52,9 +47,9 @@ def main():
     logger.add("logs/thesis_2_drift.log", rotation="500 MB")
 
     combos = QUICK_COMBOS if args.quick else list(itertools.product(SWEEP_EPSILON_VALUES, SWEEP_DECAY_VALUES))
-    print(f"Running {len(combos)} combination(s) with {args.workers} worker thread(s)...")
+    print(f"Running {len(combos)} combination(s) with {args.workers} worker process(es)...")
 
-    with ThreadPoolExecutor(max_workers=args.workers) as pool:
+    with ProcessPoolExecutor(max_workers=args.workers) as pool:
         futures = {pool.submit(run_combo, eps, decay): (eps, decay) for eps, decay in combos}
         for future in as_completed(futures):
             eps, decay = futures[future]
