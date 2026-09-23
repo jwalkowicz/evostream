@@ -21,6 +21,7 @@ class DaemonPrototype:
     text_column: str
     label_column: str = "label"
     results_table: str = "clustering_results"
+    params_table: str = "model_parameters"
 
 
 class ClusteringDaemon:
@@ -84,6 +85,8 @@ class ClusteringDaemon:
         self.warmup_buffer: List[np.ndarray] = []
         self.swap_buffer: List[np.ndarray] = []
         self.collecting_for_swap = False
+        self.docs_processed = 0
+        self.swap_count = 0
 
     def _handle_shutdown(self, sig, frame):
         logger.warning("Shutdown signal received. Stopping Daemon...")
@@ -113,7 +116,7 @@ class ClusteringDaemon:
         self.projector.fit(raw_buffer)
         projected = self.projector.transform(raw_buffer)
 
-        compromise, _, _ = self.optimizer.evolve(
+        compromise, pareto_front, _ = self.optimizer.evolve(
             data_buffer=projected,
             current_params={
                 "epsilon": float(self.clusterer.model.epsilon),
@@ -121,9 +124,32 @@ class ClusteringDaemon:
             },
         )
         self.clusterer.hot_swap_model(new_params=compromise.params, window_data=projected)
+        self.swap_count += 1
+        self._save_parameters(compromise, pareto_front_size=len(pareto_front))
 
         self.collecting_for_swap = False
         self.swap_buffer = []
+
+    def _save_parameters(self, compromise, pareto_front_size: int) -> None:
+        """Records the deployed compromise solution - one row per model swap."""
+        if not self.storage:
+            return
+        try:
+            self.storage.insert(
+                table=self.prototype.params_table,
+                data={
+                    "swap_number": self.swap_count,
+                    "docs_processed": self.docs_processed,
+                    "epsilon": compromise.params["epsilon"],
+                    "mu": compromise.params["mu"],
+                    "decay_factor": compromise.params["decaying_factor"],
+                    "fitness_quality": compromise.quality_score,
+                    "fitness_complexity": compromise.complexity_score,
+                    "pareto_front_size": pareto_front_size,
+                },
+            )
+        except Exception as e:
+            logger.error(f"Failed to insert model parameters into DB: {e}")
 
     def run(self):
         signal.signal(signal.SIGINT, self._handle_shutdown)
@@ -157,6 +183,7 @@ class ClusteringDaemon:
                     continue
 
                 embeddings = self._encode(self.preprocessor.clean_batch(raw_texts))
+                self.docs_processed += len(embeddings)
 
                 if not self.projector.is_fitted:
                     self._collect_warmup(embeddings)

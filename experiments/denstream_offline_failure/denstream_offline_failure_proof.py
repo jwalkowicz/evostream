@@ -1,202 +1,104 @@
-import collections
+"""
+Control experiment for thesis section 2.3.2: why DenStream's native offline
+phase (DBSCAN over p-micro-cluster centres, merging two centres closer than
+2 * epsilon) does not work in this system.
 
-import matplotlib.pyplot as plt
+Runs river's DenStream with the system's settings on the thesis stream (the
+same 5000 documents, IPCA fitted on the first documents and frozen, batches
+as in the thesis experiments) and records, after each batch, the number of
+p-micro-clusters, the number of macro-clusters produced by river's native
+offline phase, and the distances between p-micro-cluster centres compared
+with the 2 * epsilon merge threshold.
+"""
+
 import numpy as np
+import matplotlib.pyplot as plt
 import pandas as pd
-from river import cluster
+from river import cluster, stream
+from scipy.spatial.distance import pdist
 from sklearn.decomposition import IncrementalPCA
-from sklearn.metrics import (
-    adjusted_rand_score,
-    normalized_mutual_info_score,
-    silhouette_score,
-)
 from sklearn.preprocessing import normalize
 
-from src.apps.web_ui import load_encoder_and_data
+from experiments.theses.thesis_1.exp_thesis_1_ipca import load_phase1_stream
+from experiments.theses.thesis_2.exp_thesis_2_drift import BATCH_SIZE, INITIAL_WARMUP_SIZE
+from src.core.config import config
+from src.domain.clustering import micro_cluster_centers
 
-
-def calculate_purity(y_true, y_pred):
-    if not y_true or not y_pred or len(y_true) != len(y_pred):
-        return 0.0
-    clusters = collections.defaultdict(list)
-    for t, p in zip(y_true, y_pred):
-        if p != -1:
-            clusters[p].append(t)
-    if not clusters:
-        return 0.0
-    correct = 0
-    total = sum(len(v) for v in clusters.values())
-    for cluster_labels in clusters.values():
-        counts = collections.Counter(cluster_labels)
-        correct += counts.most_common(1)[0][1]
-    return correct / total if total > 0 else 0.0
+RESULTS_DIR = "experiments/denstream_offline_failure/results"
+PCA_DIM = 16
 
 
 def main():
-    encoder, p1, p2, p3 = load_encoder_and_data()
-
-    dataset = p1
-    texts = [x[0] for x in dataset]
-    labels_true = [x[1] for x in dataset]
-
-    epsilon = 0.1
-    mu = 2
-    beta = 0.75
-    decay = 0.005
-    denstream = cluster.DenStream(
-        epsilon=epsilon, mu=mu, beta=beta, decaying_factor=decay, n_samples_init=1
+    _, embeddings, _ = load_phase1_stream()
+    ipca = IncrementalPCA(n_components=PCA_DIM).fit(embeddings[:INITIAL_WARMUP_SIZE])
+    model = cluster.DenStream(
+        epsilon=config.denstream.epsilon,
+        mu=config.denstream.mu,
+        beta=config.denstream.beta,
+        decaying_factor=config.denstream.decaying_factor,
+        n_samples_init=config.denstream.n_samples_init,
     )
 
-    ipca = IncrementalPCA(n_components=16)
-    ipca_fitted = False
+    records = []
+    for start in range(INITIAL_WARMUP_SIZE, len(embeddings), BATCH_SIZE):
+        batch = normalize(ipca.transform(embeddings[start : start + BATCH_SIZE]))
+        for x, _ in stream.iter_array(batch):
+            model.learn_one(x)
+        # river runs its native offline phase (DBSCAN over p-micro-clusters)
+        # inside predict_one and stores the result in model.clusters
+        model.predict_one(dict(enumerate(batch[-1])))
 
-    batch_size = 150
-    metrics_log = []
-
-    window_embeddings = []
-    window_labels = []
-    window_preds = []
-
-    total = len(texts)
-
-    for i in range(0, total, batch_size):
-        batch_texts = texts[i : i + batch_size]
-        batch_labels = labels_true[i : i + batch_size]
-
-        emb = encoder.encode(batch_texts, show_progress_bar=False)
-
-        if not ipca_fitted:
-            ipca.fit(emb)
-            ipca_fitted = True
-
-        emb_pca = ipca.transform(emb)
-        emb_norm = normalize(emb_pca, norm="l2")
-
-        for j, vec in enumerate(emb_norm):
-            v_dict = {k: float(v) for k, v in enumerate(vec)}
-            denstream.learn_one(v_dict)
-            pred = denstream.predict_one(v_dict)
-
-            window_embeddings.append(vec)
-            window_labels.append(batch_labels[j])
-            window_preds.append(pred)
-
-        if len(window_embeddings) > 300:
-            window_embeddings = window_embeddings[-300:]
-            window_labels = window_labels[-300:]
-            window_preds = window_preds[-300:]
-
-        n_p = len(denstream.p_micro_clusters)
-        n_macro = len(denstream.clusters)
-
-        radii = []
-        centers = []
-        t = denstream.timestamp
-        for pmc in denstream.p_micro_clusters.values():
-            radii.append(pmc.calc_radius(t))
-            c = pmc.calc_center(t)
-            centers.append([c.get(dim, 0.0) for dim in range(16)])
-
-        mean_r = np.mean(radii) if radii else 0.0
-
-        min_d = 0.0
-        mean_d = 0.0
-        max_d = 0.0
-
-        if len(centers) > 1:
-            dists = []
-            for k1 in range(len(centers)):
-                for k2 in range(k1 + 1, len(centers)):
-                    d = np.linalg.norm(np.array(centers[k1]) - np.array(centers[k2]))
-                    dists.append(d)
-            min_d = np.min(dists)
-            mean_d = np.mean(dists)
-            max_d = np.max(dists)
-
-        ari = adjusted_rand_score(window_labels, window_preds)
-        nmi = normalized_mutual_info_score(window_labels, window_preds)
-        pur = calculate_purity(window_labels, window_preds)
-
-        sil = 0.0
-        if len(set(window_preds)) > 1:
-            sil = silhouette_score(window_embeddings, window_preds, metric="euclidean")
-
-        metrics_log.append(
+        _, centers = micro_cluster_centers(model)
+        distances = pdist(centers) if len(centers) > 1 else np.array([np.nan])
+        records.append(
             {
-                "batch": i // batch_size + 1,
-                "n_p_micro": n_p,
-                "n_macro": n_macro,
-                "mean_radius": mean_r,
-                "min_d": min_d,
-                "mean_d": mean_d,
-                "max_d": max_d,
-                "2_eps": 2 * epsilon,
-                "ari": ari,
-                "nmi": nmi,
-                "purity": pur,
-                "silhouette": sil,
+                "samples_seen": start + len(batch),
+                "n_p_micro": len(centers),
+                "n_macro_native": len(model.clusters),
+                "min_d": float(np.min(distances)),
+                "mean_d": float(np.mean(distances)),
+                "max_d": float(np.max(distances)),
+                "2_eps": 2 * config.denstream.epsilon,
             }
         )
 
-    df = pd.DataFrame(metrics_log)
-    out_path = (
-        "experiments/denstream_offline_failure/results/denstream_failure_metrics.csv"
+    df = pd.DataFrame(records)
+    df.to_csv(f"{RESULTS_DIR}/denstream_failure_metrics.csv", index=False)
+    print(
+        f"p-micro-clusters: {df['n_p_micro'].min()}-{df['n_p_micro'].max()} | "
+        f"native macro-clusters: {df['n_macro_native'].min()}-{df['n_macro_native'].max()} | "
+        f"batches with macro == micro: {(df['n_macro_native'] == df['n_p_micro']).sum()}/{len(df)}\n"
+        f"min distance: {df['min_d'].min():.3f}-{df['min_d'].max():.3f} | "
+        f"mean distance: {df['mean_d'].min():.3f}-{df['mean_d'].max():.3f} | "
+        f"2*eps = {2 * config.denstream.epsilon:.2f}"
     )
-    df.to_csv(out_path, index=False)
-    print(f"Metrics saved to {out_path}")
 
 
 def generate_chart():
-    df = pd.read_csv(
-        "experiments/denstream_offline_failure/results/denstream_failure_metrics.csv"
-    )
+    """Distances between p-micro-cluster centres against the offline-phase
+    merge threshold 2*epsilon (thesis section 2.3.2, Figure 3)."""
+    df = pd.read_csv(f"{RESULTS_DIR}/denstream_failure_metrics.csv")
 
-    fig, axes = plt.subplots(2, 1, figsize=(10, 10), sharex=True)
+    plt.rcParams.update({"font.size": 11, "font.family": "serif"})
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    ax.plot(df["samples_seen"], df["mean_d"], lw=2, color="#2980b9",
+            label="Średnia odległość między środkami p-mikroklastrów")
+    ax.plot(df["samples_seen"], df["min_d"], lw=2, color="#e67e22",
+            label="Najmniejsza odległość między środkami p-mikroklastrów")
+    ax.axhline(df["2_eps"].iloc[0], color="#c0392b", linestyle="--", lw=2,
+               label="Próg łączenia mikroklastrów w fazie offline (2ε)")
 
-    axes[0].plot(df["batch"], df["n_p_micro"], label="p-micro-clusters", marker="o")
-    axes[0].plot(
-        df["batch"], df["n_macro"], label="macro-clusters (River native)", marker="x"
-    )
-    axes[0].set_ylabel("Liczba klastrów")
-    axes[0].set_title("Liczba p-mikroklastrów a liczba makroklastrów")
-    axes[0].legend()
-    axes[0].grid(True)
+    ax.set_xlabel("Liczba przetworzonych dokumentów")
+    ax.set_ylabel("Odległość euklidesowa")
+    ax.set_ylim(0, 1.1)
+    ax.set_xlim(df["samples_seen"].min(), df["samples_seen"].max())
+    ax.grid(True, linestyle="--", alpha=0.6)
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.18), ncol=1, frameon=False)
 
-    axes[1].plot(
-        df["batch"],
-        df["min_d"],
-        label="Minimalny dystans euklidesowy",
-        color="red",
-        linestyle="--",
-    )
-    axes[1].plot(
-        df["batch"], df["mean_d"], label="Średni dystans euklidesowy", color="orange"
-    )
-    axes[1].axhline(
-        y=df["2_eps"].iloc[0],
-        color="black",
-        linestyle=":",
-        label="Próg scalania DBSCAN (2*eps)",
-    )
-
-    ax2 = axes[1].twinx()
-    ax2.set_ylabel("ARI / NMI")
-
-    axes[1].set_xlabel("Batch (nr partii)")
-    axes[1].set_ylabel("Dystans euklidesowy")
-    axes[1].set_title("Dystanse vs próg scalania")
-
-    lines_1, labels_1 = axes[1].get_legend_handles_labels()
-    lines_2, labels_2 = ax2.get_legend_handles_labels()
-    axes[1].legend(lines_1 + lines_2, labels_1 + labels_2, loc="center right")
-    axes[1].grid(True)
-
-    plt.tight_layout()
-    out_path = (
-        "experiments/denstream_offline_failure/results/denstream_failure_proof.png"
-    )
-    plt.savefig(out_path)
-    print(f"Wykres został wygenerowany w '{out_path}'")
+    out_path = f"{RESULTS_DIR}/denstream_failure_proof.png"
+    plt.savefig(out_path, dpi=300, bbox_inches="tight")
+    plt.close()
+    print(f"Saved {out_path}")
 
 
 if __name__ == "__main__":

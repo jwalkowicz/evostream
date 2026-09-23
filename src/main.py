@@ -123,6 +123,7 @@ def run_daemon_command(
         text_column=config.dataset.text_column,
         label_column="label",
         results_table=config.postgres.tables.results,
+        params_table=config.postgres.tables.params,
     )
 
     daemon = ClusteringDaemon(

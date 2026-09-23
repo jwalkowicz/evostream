@@ -18,15 +18,18 @@ CLUSTERING_RESULTS_SCHEMA = """
     pca_components INTEGER
 """
 
+# One row per model swap: the compromise solution NSGA-II deployed after a
+# detected drift.
 MODEL_PARAMETERS_SCHEMA = """
     id SERIAL PRIMARY KEY,
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    generation INTEGER,
+    swap_number INTEGER,
+    docs_processed INTEGER,
     epsilon FLOAT,
     mu INTEGER,
     decay_factor FLOAT,
-    offline_eps FLOAT,
     fitness_quality FLOAT,
-    fitness_complexity FLOAT
+    fitness_complexity FLOAT,
+    pareto_front_size INTEGER
 """
 
