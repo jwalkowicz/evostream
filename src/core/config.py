@@ -58,6 +58,8 @@ class MLSettings(BaseModel):
     embedding_model: str
     pca_components_num: int
     use_pca: bool = True
+    ipca_warmup_size: int = 300
+    batch_size: int = 50
 
 
 class DenStreamSettings(BaseModel):
@@ -79,7 +81,6 @@ class DriftSettings(BaseModel):
     window_size: int = 20
     min_warmup_steps: int = 5
     quality_drop_sigma: float = 2.0
-    outlier_surge_threshold: float = 0.30
     cooldown_steps: int = 20
     divergence_threshold: float = 0.25
     consecutive_drops_required: int = 2
@@ -100,8 +101,9 @@ class EvolutionSettings(BaseModel):
     beta: float = 0.75
     n_samples_init: int = 1
     min_eval_buffer: int = 40
+    hotswap_buffer_size: int = 500
     param_bounds: Dict[str, Any] = {
-        "epsilon": [0.05, 0.15],
+        "epsilon": [0.05, 0.40],
         "decaying_factor": [0.005, 0.08],
     }
 

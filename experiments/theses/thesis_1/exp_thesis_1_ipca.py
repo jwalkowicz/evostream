@@ -9,6 +9,8 @@ IPCA warmup and the same DenStream settings from config.
 
 Every dimensionality is run over one shared epsilon grid and reported at its
 best epsilon, so no variant is judged at a value tuned for another one.
+Each configuration is repeated on several shuffled orders of the stream
+(STREAM_SEEDS), and results are reported as mean +/- std across orders.
 
 The micro-cluster radius formula is selectable (--radius), see
 src/domain/clustering.py and https://github.com/online-ml/river/issues/2004.
@@ -43,6 +45,9 @@ RESULTS_DIR = "experiments/theses/thesis_1/results"
 # None = full 384-dimensional SBERT embeddings, no projection.
 PCA_DIMS: List[Optional[int]] = [None, 128, 64, 32, 16, 8]
 EPSILON_GRID = [0.05, 0.10, 0.20, 0.30, 0.50]
+# Each seed shuffles the stream differently, which also changes the documents
+# IPCA is fitted on - the spread across seeds is the run-to-run noise.
+STREAM_SEEDS = [0, 1, 2]
 SBERT_TIMING_SAMPLE = 500
 
 
@@ -56,6 +61,11 @@ def load_phase1_stream():
         embeddings[:SAMPLES_PER_PHASE],
         labels[:SAMPLES_PER_PHASE],
     )
+
+
+def shuffle_stream(embeddings: np.ndarray, labels: List[str], seed: int):
+    order = np.random.default_rng(seed).permutation(len(embeddings))
+    return embeddings[order], [labels[i] for i in order]
 
 
 def measure_sbert_latency_ms(texts: List[str]) -> float:
@@ -76,13 +86,15 @@ def run_streaming_simulation(
     labels: List[str],
     pca_dim: Optional[int],
     epsilon: float,
+    decaying_factor: Optional[float] = None,
 ) -> pd.DataFrame:
     """Streams the documents through (IPCA ->) DenStream batch by batch.
 
     IPCA is fitted once on the first INITIAL_WARMUP_SIZE documents and then
     frozen, as in thesis 2. Those warmup documents are not clustered or
     scored. Latency covers only the per-batch stream work (projection +
-    clustering); the one-off IPCA fit is reported separately.
+    clustering); the one-off IPCA fit is reported separately. The decaying
+    factor defaults to the config value.
     """
     set_seed(config.seed)
     n_categories = len(set(labels))
@@ -99,7 +111,7 @@ def run_streaming_simulation(
         epsilon=epsilon,
         mu=config.denstream.mu,
         beta=config.denstream.beta,
-        decaying_factor=config.denstream.decaying_factor,
+        decaying_factor=decaying_factor or config.denstream.decaying_factor,
         n_samples_init=config.denstream.n_samples_init,
         window_size=config.denstream.window_size,
         expected_macro_clusters=n_categories,
@@ -147,21 +159,36 @@ def run_streaming_simulation(
 
 
 def summarize(timeseries: pd.DataFrame, sbert_ms: float) -> pd.DataFrame:
-    """One row per (dimension, epsilon), with the best epsilon (by mean
-    purity) flagged for each dimension. Speed-up is relative to full SBERT
-    at its own best epsilon."""
+    """One row per (dimension, epsilon): each run is first averaged over the
+    stream, then mean and std are taken across stream seeds. The best
+    epsilon (by mean purity) is flagged for each dimension. Speed-up is
+    relative to full SBERT at its own best epsilon."""
+    per_run = (
+        timeseries.groupby(["pca_dim", "epsilon", "seed"])
+        .agg(
+            purity=("purity", "mean"),
+            nmi=("nmi", "mean"),
+            ari=("ari", "mean"),
+            silhouette=("silhouette", "mean"),
+            micro_clusters=("n_micro_clusters", "mean"),
+            stream_ms=("stream_ms", "mean"),
+            ipca_fit_ms=("ipca_fit_ms", "first"),
+        )
+        .reset_index()
+    )
     summary = (
-        timeseries.groupby(["pca_dim", "epsilon"])
+        per_run.groupby(["pca_dim", "epsilon"])
         .agg(
             mean_purity=("purity", "mean"),
             std_purity=("purity", "std"),
             mean_nmi=("nmi", "mean"),
+            std_nmi=("nmi", "std"),
             mean_ari=("ari", "mean"),
             mean_silhouette=("silhouette", "mean"),
-            mean_micro_clusters=("n_micro_clusters", "mean"),
+            mean_micro_clusters=("micro_clusters", "mean"),
             mean_stream_ms=("stream_ms", "mean"),
             std_stream_ms=("stream_ms", "std"),
-            ipca_fit_ms=("ipca_fit_ms", "first"),
+            ipca_fit_ms=("ipca_fit_ms", "mean"),
         )
         .reset_index()
     )
@@ -188,14 +215,15 @@ def plot_best_purity(timeseries: pd.DataFrame, summary: pd.DataFrame, out_path: 
             & (timeseries["epsilon"] == row["epsilon"])
         ]
         name = "Pełne SBERT (384d)" if row["pca_dim"] == 384 else f"IPCA (d={row['pca_dim']})"
+        mean_over_seeds = sub.groupby("samples_seen")["purity"].mean()
         ax.plot(
-            sub["samples_seen"],
-            sub["purity"].ewm(span=5).mean(),
+            mean_over_seeds.index,
+            mean_over_seeds.ewm(span=5).mean(),
             label=f"{name}, ε={row['epsilon']}",
             lw=2.0,
         )
 
-    ax.set_title("Czystość klastrów tematycznych (najlepsze ε dla każdego wymiaru)")
+    ax.set_title("Czystość klastrów tematycznych (najlepsze ε, średnia z kolejności strumienia)")
     ax.set_xlabel("Liczba przetworzonych dokumentów")
     ax.set_ylabel("Czystość")
     ax.set_ylim(0.0, 1.0)
@@ -219,21 +247,22 @@ def main():
     logger.add("logs/thesis_1_ipca.log", rotation="500 MB")
     logger.info(
         f"Thesis 1 | radius={args.radius} | categories={PHASE1_CATEGORIES} | "
-        f"docs={SAMPLES_PER_PHASE} | batch={BATCH_SIZE} | warmup={INITIAL_WARMUP_SIZE}"
+        f"docs={SAMPLES_PER_PHASE} | batch={BATCH_SIZE} | warmup={INITIAL_WARMUP_SIZE} | "
+        f"seeds={STREAM_SEEDS}"
     )
 
     texts, embeddings, labels = load_phase1_stream()
     sbert_ms = measure_sbert_latency_ms(texts)
     logger.info(f"SBERT latency: {sbert_ms:.2f} ms/doc")
 
-    timeseries = pd.concat(
-        [
-            run_streaming_simulation(embeddings, labels, pca_dim, eps)
-            for pca_dim in PCA_DIMS
-            for eps in EPSILON_GRID
-        ],
-        ignore_index=True,
-    )
+    runs = []
+    for seed in STREAM_SEEDS:
+        seed_embeddings, seed_labels = shuffle_stream(embeddings, labels, seed)
+        for pca_dim in PCA_DIMS:
+            for eps in EPSILON_GRID:
+                run = run_streaming_simulation(seed_embeddings, seed_labels, pca_dim, eps)
+                runs.append(run.assign(seed=seed))
+    timeseries = pd.concat(runs, ignore_index=True)
     summary = summarize(timeseries, sbert_ms)
 
     suffix = f"radius_{args.radius}"

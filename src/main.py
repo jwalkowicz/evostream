@@ -1,14 +1,12 @@
 import typer
-from river import cluster
 from sentence_transformers import SentenceTransformer
-from sklearn.decomposition import IncrementalPCA
 
 from src.apps.daemon import ClusteringDaemon, DaemonPrototype
 from src.apps.ingesting import IngesterApp, IngesterPrototype
 from src.apps.setup import InfrastructureSetup, TablePrototype, TopicPrototype
 from src.core.config import config
 from src.domain.clustering import StreamClusterer
-from src.domain.preprocessing import EmbeddingTransformer, TextPreprocessor
+from src.domain.preprocessing import StreamProjector, TextPreprocessor
 from src.infrastructure.kafka.client import StreamAdmin, StreamConsumer, StreamProducer
 from src.infrastructure.postgres.client import DBAdmin
 from src.model import schemas
@@ -106,25 +104,21 @@ def run_daemon_command(
     storage = get_db_admin()
 
     preprocessor = TextPreprocessor()
-    pca_instance = IncrementalPCA(n_components=pca_dim) if use_pca else None
-    transformer = EmbeddingTransformer(
-        encoder=SentenceTransformer(config.ml.embedding_model),
-        pca=pca_instance,
-    )
+    encoder = SentenceTransformer(config.ml.embedding_model)
+    projector = StreamProjector(n_components=pca_dim if use_pca else None)
 
-    denstream_model = cluster.DenStream(
-        decaying_factor=config.denstream.decaying_factor,
+    clusterer = StreamClusterer(
         epsilon=config.denstream.epsilon,
         mu=config.denstream.mu,
-    )
-    clusterer = StreamClusterer(
-        model=denstream_model,
-        offline_eps=config.denstream.offline_eps,
-        offline_min_samples=config.denstream.offline_min_samples,
+        beta=config.denstream.beta,
+        decaying_factor=config.denstream.decaying_factor,
+        n_samples_init=config.denstream.n_samples_init,
+        window_size=config.denstream.window_size,
+        expected_macro_clusters=len(config.dataset.categories_concept_a),
     )
 
     prototype = DaemonPrototype(
-        batch_size=config.kafka.batch_size,
+        batch_size=config.ml.batch_size,
         timeout=config.kafka.timeout,
         text_column=config.dataset.text_column,
         label_column="label",
@@ -135,7 +129,8 @@ def run_daemon_command(
         consumer=consumer,
         storage=storage,
         preprocessor=preprocessor,
-        transformer=transformer,
+        encoder=encoder,
+        projector=projector,
         clusterer=clusterer,
         prototype=prototype,
     )
@@ -168,8 +163,8 @@ def benchmark_thesis_2_command():
 
 @app.command(name="benchmark-thesis-3")
 def benchmark_thesis_3_command():
-    """Run Thesis 3 benchmark: Multi-Objective Pareto Front & Knee Point Analysis."""
-    from experiments.exp_thesis_3_pareto import run_pareto_analysis
+    """Run Thesis 3 benchmark: Multi-Objective Pareto Front & Compromise Solution Analysis."""
+    from experiments.theses.thesis_3.exp_thesis_3_pareto import main as run_pareto_analysis
 
     run_pareto_analysis()
 

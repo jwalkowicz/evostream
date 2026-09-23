@@ -1,7 +1,7 @@
 import json
 import signal
 from dataclasses import dataclass
-from typing import Optional
+from typing import List, Optional
 
 import numpy as np
 
@@ -10,7 +10,7 @@ from src.core.logger import logger
 from src.domain.clustering import StreamClusterer
 from src.domain.drift import UnsupervisedDriftDetector
 from src.domain.evolution import NSGAIIOptimizer
-from src.domain.preprocessing import EmbeddingTransformer, TextPreprocessor
+from src.domain.preprocessing import StreamProjector, TextPreprocessor
 from src.infrastructure.postgres.client import DBAdmin
 
 
@@ -21,14 +21,18 @@ class DaemonPrototype:
     text_column: str
     label_column: str = "label"
     results_table: str = "clustering_results"
-    adaptation_mode: str = "hot_swap"
 
 
 class ClusteringDaemon:
     """
-    Consumes raw text data from Kafka, applies preprocessing & embedding transformation,
-    executes online two-phase stream clustering, detects concept drift, and autonomously
-    adapts parameters via NSGA-II.
+    Consumes raw text data from Kafka and runs the adaptive clustering
+    pipeline the same way as the thesis 2 experiment:
+
+    SBERT -> IPCA (fitted once on the first documents, then frozen) ->
+    two-phase DenStream -> unsupervised drift detection. After a drift alarm
+    the daemon collects a buffer of post-drift documents, re-fits IPCA on
+    them, evolves DenStream parameters with NSGA-II and swaps in the new
+    projection and model together.
     """
 
     def __init__(
@@ -36,14 +40,16 @@ class ClusteringDaemon:
         consumer,
         storage: Optional[DBAdmin],
         preprocessor: TextPreprocessor,
-        transformer: EmbeddingTransformer,
+        encoder,
+        projector: StreamProjector,
         clusterer: StreamClusterer,
         prototype: DaemonPrototype,
     ):
         self.consumer = consumer
         self.storage = storage
         self.preprocessor = preprocessor
-        self.transformer = transformer
+        self.encoder = encoder
+        self.projector = projector
         self.clusterer = clusterer
         self.prototype = prototype
         self.running = True
@@ -52,10 +58,14 @@ class ClusteringDaemon:
             window_size=config.drift.window_size,
             min_warmup_steps=config.drift.min_warmup_steps,
             quality_drop_sigma=config.drift.quality_drop_sigma,
-            outlier_surge_threshold=config.drift.outlier_surge_threshold,
             cooldown_steps=config.drift.cooldown_steps,
+            consecutive_drops_required=config.drift.consecutive_drops_required,
+            centroid_shift_threshold=config.drift.centroid_shift_threshold,
+            quality_absolute_floor=config.drift.quality_absolute_floor,
+            centroid_shift_min_warmup_steps=config.drift.centroid_shift_min_warmup_steps,
         )
         self.optimizer = NSGAIIOptimizer(
+            n_macro_clusters=clusterer.expected_macro_clusters,
             population_size=config.evolution.population_size,
             generations=config.evolution.generations,
             crossover_rate=config.evolution.crossover_rate,
@@ -70,11 +80,50 @@ class ClusteringDaemon:
                 k: tuple(v) for k, v in config.evolution.param_bounds.items()
             },
         )
-        self.recent_vectors_buffer = []
+
+        self.warmup_buffer: List[np.ndarray] = []
+        self.swap_buffer: List[np.ndarray] = []
+        self.collecting_for_swap = False
 
     def _handle_shutdown(self, sig, frame):
         logger.warning("Shutdown signal received. Stopping Daemon...")
         self.running = False
+
+    def _encode(self, texts: List[str]) -> np.ndarray:
+        return self.encoder.encode(
+            texts,
+            show_progress_bar=False,
+            convert_to_numpy=True,
+            normalize_embeddings=True,
+        )
+
+    def _collect_warmup(self, embeddings: np.ndarray) -> None:
+        """Buffers the first documents and fits IPCA once there are enough.
+        As in the experiments, these documents are not clustered."""
+        self.warmup_buffer.extend(embeddings)
+        if len(self.warmup_buffer) >= config.ml.ipca_warmup_size:
+            self.projector.fit(np.array(self.warmup_buffer))
+            logger.info(f"IPCA fitted on {len(self.warmup_buffer)} warm-up documents.")
+            self.warmup_buffer = []
+
+    def _swap_model(self) -> None:
+        """Re-fits IPCA on the post-drift buffer, evolves DenStream parameters
+        on the projected buffer and swaps in the new projection and model."""
+        raw_buffer = np.array(self.swap_buffer)
+        self.projector.fit(raw_buffer)
+        projected = self.projector.transform(raw_buffer)
+
+        compromise, _, _ = self.optimizer.evolve(
+            data_buffer=projected,
+            current_params={
+                "epsilon": float(self.clusterer.model.epsilon),
+                "decaying_factor": float(self.clusterer.model.decaying_factor),
+            },
+        )
+        self.clusterer.hot_swap_model(new_params=compromise.params, window_data=projected)
+
+        self.collecting_for_swap = False
+        self.swap_buffer = []
 
     def run(self):
         signal.signal(signal.SIGINT, self._handle_shutdown)
@@ -107,48 +156,38 @@ class ClusteringDaemon:
                 if not raw_texts:
                     continue
 
-                cleaned_texts = self.preprocessor.clean_batch(raw_texts)
+                embeddings = self._encode(self.preprocessor.clean_batch(raw_texts))
 
-                embeddings = self.transformer.fit_transform(cleaned_texts)
+                if not self.projector.is_fitted:
+                    self._collect_warmup(embeddings)
+                    self.consumer.commit()
+                    continue
 
-                preds = self.clusterer.update(
-                    embeddings, labels=labels if any(labels) else None
+                self.clusterer.update(
+                    self.projector.transform(embeddings),
+                    labels=labels if any(labels) else None,
                 )
-
                 metrics = self.clusterer.get_metrics()
-                metrics["pca_components"] = self.transformer.output_dim
-
-                self.recent_vectors_buffer.extend(embeddings)
-                if len(self.recent_vectors_buffer) > 500:
-                    self.recent_vectors_buffer = self.recent_vectors_buffer[-500:]
+                metrics["pca_components"] = self.projector.n_components or embeddings.shape[1]
 
                 is_drift = self.drift_detector.update(
                     current_silhouette=metrics["silhouette"] or 0.0,
-                    n_micro_clusters=metrics["n_micro_clusters"],
-                    n_outlier_clusters=metrics["n_outlier_clusters"],
-                    outlier_ratio=metrics.get("outlier_ratio"),
-                    n_macro_clusters=metrics.get("n_macro_clusters"),
+                    centroid_shift=metrics["centroid_shift"],
                 )
 
-                if is_drift and len(self.recent_vectors_buffer) >= 50:
+                if is_drift and not self.collecting_for_swap:
                     logger.warning(
-                        f"Unsupervised Concept Drift flagged! Triggering reactive NSGA-II "
-                        f"optimization (mode: {self.prototype.adaptation_mode})..."
+                        "Unsupervised concept drift flagged! Collecting "
+                        f"{config.evolution.hotswap_buffer_size} post-drift documents "
+                        "before re-fitting IPCA and running NSGA-II..."
                     )
+                    self.collecting_for_swap = True
+                    self.swap_buffer = []
 
-                    best_knee, _, _ = self.optimizer.evolve(
-                        data_buffer=np.array(self.recent_vectors_buffer),
-                        current_params={
-                            "epsilon": float(self.clusterer.model.epsilon),
-                            "decaying_factor": float(
-                                self.clusterer.model.decaying_factor
-                            ),
-                        },
-                    )
-                    self.clusterer.hot_swap_model(
-                        new_params=best_knee.params,
-                        window_data=np.array(self.recent_vectors_buffer),
-                    )
+                if self.collecting_for_swap:
+                    self.swap_buffer.extend(embeddings)
+                    if len(self.swap_buffer) >= config.evolution.hotswap_buffer_size:
+                        self._swap_model()
 
                 if self.storage:
                     try:
@@ -164,10 +203,9 @@ class ClusteringDaemon:
                     f"Processed batch of {len(raw_texts)} docs | "
                     f"Micro: {metrics['n_micro_clusters']} | "
                     f"Macro: {metrics['n_macro_clusters']} | "
-                    f"Ratio: {metrics['micro_macro_ratio']:.2f} | "
                     f"Purity: {metrics.get('purity', 0.0)} | "
                     f"Silhouette: {metrics.get('silhouette', 0.0)} | "
-                    f"Latency: {metrics.get('latency_ms_per_doc', 0.0)}ms/doc"
+                    f"Latency: {metrics.get('latency_ms_per_doc', 0.0):.3f}ms/doc"
                 )
 
         finally:

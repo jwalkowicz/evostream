@@ -19,29 +19,26 @@ from concurrent.futures import ProcessPoolExecutor
 from typing import Optional
 
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 
 from experiments.theses.thesis_1.exp_thesis_1_ipca import (
     EPSILON_GRID,
     PCA_DIMS,
+    STREAM_SEEDS,
     load_phase1_stream,
     run_streaming_simulation,
+    shuffle_stream,
 )
 from src.domain.clustering import set_river_radius_fix
 
 RESULTS_DIR = "experiments/denstream_radius/results"
-SEEDS = [0, 1, 2]
 RADIUS_MODES = ["river", "fixed"]
 
 
 def run_one(seed: int, radius: str, pca_dim: Optional[int], epsilon: float) -> dict:
     set_river_radius_fix(radius == "fixed")
     _, embeddings, labels = load_phase1_stream()
-    order = np.random.default_rng(seed).permutation(len(embeddings))
-    df = run_streaming_simulation(
-        embeddings[order], [labels[i] for i in order], pca_dim, epsilon
-    )
+    df = run_streaming_simulation(*shuffle_stream(embeddings, labels, seed), pca_dim, epsilon)
     return {
         "seed": seed,
         "radius": radius,
@@ -103,7 +100,7 @@ def main():
     parser.add_argument("--workers", type=int, default=4)
     args = parser.parse_args()
 
-    grid = list(itertools.product(SEEDS, RADIUS_MODES, PCA_DIMS, EPSILON_GRID))
+    grid = list(itertools.product(STREAM_SEEDS, RADIUS_MODES, PCA_DIMS, EPSILON_GRID))
     print(f"Running {len(grid)} simulations with {args.workers} worker process(es)...")
     with ProcessPoolExecutor(max_workers=args.workers) as pool:
         rows = list(pool.map(run_one, *zip(*grid)))

@@ -14,17 +14,14 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 import torch
-from river import stream
 from sentence_transformers import SentenceTransformer
 from sklearn.datasets import fetch_20newsgroups
-from sklearn.decomposition import IncrementalPCA
-from sklearn.preprocessing import normalize
 
 from src.core.config import config
 from src.domain.clustering import StreamClusterer
 from src.domain.drift import UnsupervisedDriftDetector
 from src.domain.evolution import NSGAIIOptimizer
-from src.domain.preprocessing import TextPreprocessor
+from src.domain.preprocessing import StreamProjector, TextPreprocessor
 from src.model.schemas import CLUSTERING_RESULTS_SCHEMA, MODEL_PARAMETERS_SCHEMA
 
 # ---------------------------------------------------------
@@ -106,39 +103,68 @@ def load_encoder_and_data():
     return encoder, p1, p2, p3
 
 
-# ---------------------------------------------------------
-# Session State Initialization
-# ---------------------------------------------------------
-if "clusterer" not in st.session_state:
-    st.session_state.clusterer = StreamClusterer(
+encoder, data_a, data_b, data_c = load_encoder_and_data()
+N_MACRO_CLUSTERS = len(config.dataset.categories_concept_a)
+
+
+def create_projector() -> StreamProjector:
+    """IPCA fitted once on the first documents of concept A and then frozen,
+    as in the thesis experiments; it is re-fitted only on a model swap."""
+    projector = StreamProjector(n_components=config.ml.pca_components_num)
+    warmup_texts = [item[0] for item in data_a[: config.ml.ipca_warmup_size]]
+    projector.fit(
+        encoder.encode(warmup_texts, normalize_embeddings=True, convert_to_numpy=True)
+    )
+    return projector
+
+
+def create_clusterer() -> StreamClusterer:
+    return StreamClusterer(
         epsilon=config.denstream.epsilon,
         mu=config.denstream.mu,
         beta=config.denstream.beta,
         decaying_factor=config.denstream.decaying_factor,
         n_samples_init=config.denstream.n_samples_init,
         window_size=config.denstream.window_size,
+        expected_macro_clusters=N_MACRO_CLUSTERS,
     )
-    st.session_state.drift_detector = UnsupervisedDriftDetector(
+
+
+def create_detector() -> UnsupervisedDriftDetector:
+    return UnsupervisedDriftDetector(
         window_size=config.drift.window_size,
         min_warmup_steps=config.drift.min_warmup_steps,
         quality_drop_sigma=config.drift.quality_drop_sigma,
-        outlier_surge_threshold=config.drift.outlier_surge_threshold,
         cooldown_steps=config.drift.cooldown_steps,
+        consecutive_drops_required=config.drift.consecutive_drops_required,
+        centroid_shift_threshold=config.drift.centroid_shift_threshold,
+        quality_absolute_floor=config.drift.quality_absolute_floor,
+        centroid_shift_min_warmup_steps=config.drift.centroid_shift_min_warmup_steps,
     )
-    st.session_state.optimizer = NSGAIIOptimizer(
+
+
+def create_optimizer() -> NSGAIIOptimizer:
+    return NSGAIIOptimizer(
+        n_macro_clusters=N_MACRO_CLUSTERS,
         population_size=config.evolution.population_size,
         generations=config.evolution.generations,
         crossover_rate=config.evolution.crossover_rate,
+        crossover_eta=config.evolution.crossover_eta,
         mutation_rate=config.evolution.mutation_rate,
+        mutation_eta=config.evolution.mutation_eta,
         param_bounds={k: tuple(v) for k, v in config.evolution.param_bounds.items()},
         fixed_mu=config.denstream.mu,
         n_samples_init=config.denstream.n_samples_init,
         min_eval_buffer=config.evolution.min_eval_buffer,
+        seed=config.evolution.seed,
     )
-    st.session_state.ipca = IncrementalPCA(
-        n_components=config.ml.pca_components_num if config.ml else 16
-    )
-    st.session_state.ipca_fitted = False
+
+
+def reset_session_state():
+    st.session_state.clusterer = create_clusterer()
+    st.session_state.drift_detector = create_detector()
+    st.session_state.optimizer = create_optimizer()
+    st.session_state.projector = create_projector()
 
     st.session_state.current_concept = "A"
     st.session_state.is_streaming = False
@@ -152,14 +178,52 @@ if "clusterer" not in st.session_state:
     st.session_state.recent_labels = []
     st.session_state.recent_texts = []
     st.session_state.recent_macro_preds = []
-    st.session_state.recent_micro_preds = []
     st.session_state.recent_vectors_buffer = []
+    st.session_state.recent_raw_buffer = []
+    st.session_state.collecting_for_swap = False
+    st.session_state.swap_buffer = []
     st.session_state.latest_pareto_front = []
-    st.session_state.latest_knee_point = None
+    st.session_state.latest_compromise = None
     st.session_state.drift_events = []
+    st.session_state.detection_events = []
 
 
-encoder, data_a, data_b, data_c = load_encoder_and_data()
+def swap_model(raw_buffer: np.ndarray):
+    """Model swap as in the thesis 2 experiment: re-fits IPCA on the raw
+    embeddings of the buffer, runs NSGA-II on the projected buffer and swaps
+    in the compromise-solution model trained on it."""
+    st.session_state.projector.fit(raw_buffer)
+    projected = st.session_state.projector.transform(raw_buffer)
+    st.session_state.recent_vectors_buffer = list(projected[-config.denstream.window_size :])
+    st.session_state.recent_2d_points = list(projected[-config.denstream.window_size :, :2])
+
+    compromise, front, _ = st.session_state.optimizer.evolve(
+        data_buffer=projected,
+        current_params={
+            "epsilon": float(st.session_state.clusterer.model.epsilon),
+            "decaying_factor": float(st.session_state.clusterer.model.decaying_factor),
+            "mu": int(st.session_state.clusterer.model.mu),
+        },
+    )
+    st.session_state.latest_pareto_front = front
+    st.session_state.latest_compromise = compromise
+    st.session_state.clusterer.hot_swap_model(compromise.params, projected)
+    print(
+        f"✅ NSGA-II done | Front size={len(front)} | "
+        f"Compromise: ε={compromise.params['epsilon']:.4f} "
+        f"λ={compromise.params['decaying_factor']:.4f} "
+        f"Quality={compromise.quality_score:.4f} Complexity={compromise.complexity_score:.4f}"
+    )
+    return compromise
+
+
+# ---------------------------------------------------------
+# Session State Initialization
+# ---------------------------------------------------------
+if "clusterer" not in st.session_state:
+    reset_session_state()
+
+
 TOPICS_A = config.dataset.categories_concept_a
 TOPICS_B = config.dataset.categories_concept_b
 TOPICS_C = config.dataset.categories_concept_c
@@ -189,8 +253,10 @@ st.sidebar.markdown(
 st.sidebar.markdown("---")
 st.sidebar.markdown("### Przepływ i tempo strumienia")
 
-batch_size = 150  # Hardcoded to prevent breaking the batch-based warmup logic
-stream_delay = 0.7  # Hardcoded stream delay
+# Same batch size as the thesis experiments - the detector's windows and
+# warm-up periods are counted in batches.
+batch_size = config.ml.batch_size
+stream_delay = 0.2
 
 # Auto-Stream Play / Pause Button
 if st.session_state.get("is_streaming", False):
@@ -215,52 +281,28 @@ disable_adaptation = st.sidebar.checkbox(
 manual_ga_clicked = st.sidebar.button("Uruchom optymalizację NSGA-II", width="stretch")
 reset_clicked = st.sidebar.button("Zresetuj stan strumienia", width="stretch")
 
+st.sidebar.markdown("---")
+st.sidebar.markdown("### Stan adaptacji")
+_warmup = config.drift.centroid_shift_min_warmup_steps
+_steps = st.session_state.drift_detector.total_steps_seen
+if _steps < _warmup:
+    st.sidebar.caption(f"Rozgrzewka sygnału przesunięcia centroidów: {_steps}/{_warmup} partii")
+else:
+    st.sidebar.caption("Detektor dryfu aktywny (oba sygnały)")
+if st.session_state.collecting_for_swap:
+    _collected = len(st.session_state.swap_buffer)
+    _needed = config.evolution.hotswap_buffer_size
+    st.sidebar.progress(
+        min(1.0, _collected / _needed),
+        text=f"Zbieranie dokumentów po dryfie: {_collected}/{_needed}",
+    )
+
 
 # ---------------------------------------------------------
 # Actions Handling
 # ---------------------------------------------------------
 if reset_clicked:
-    st.session_state.clusterer = StreamClusterer(
-        epsilon=config.denstream.epsilon,
-        mu=config.denstream.mu,
-        beta=config.denstream.beta,
-        decaying_factor=config.denstream.decaying_factor,
-        n_samples_init=config.denstream.n_samples_init,
-        window_size=config.denstream.window_size,
-    )
-    st.session_state.drift_detector = UnsupervisedDriftDetector(
-        window_size=config.drift.window_size,
-        min_warmup_steps=config.drift.min_warmup_steps,
-        quality_drop_sigma=config.drift.quality_drop_sigma,
-        outlier_surge_threshold=config.drift.outlier_surge_threshold,
-        cooldown_steps=config.drift.cooldown_steps,
-    )
-    st.session_state.optimizer = NSGAIIOptimizer(
-        population_size=config.evolution.population_size,
-        generations=config.evolution.generations,
-        crossover_rate=config.evolution.crossover_rate,
-        mutation_rate=config.evolution.mutation_rate,
-        param_bounds={k: tuple(v) for k, v in config.evolution.param_bounds.items()},
-        fixed_mu=config.denstream.mu,
-        n_samples_init=config.denstream.n_samples_init,
-        min_eval_buffer=config.evolution.min_eval_buffer,
-    )
-    st.session_state.current_concept = "A"
-    st.session_state.is_streaming = False
-    st.session_state.stream_idx_a = 0
-    st.session_state.stream_idx_b = 0
-    st.session_state.stream_idx_c = 0
-    st.session_state.total_docs_processed = 0
-    st.session_state.history_records = []
-    st.session_state.recent_2d_points = []
-    st.session_state.recent_labels = []
-    st.session_state.recent_texts = []
-    st.session_state.recent_macro_preds = []
-    st.session_state.recent_micro_preds = []
-    st.session_state.recent_vectors_buffer = []
-    st.session_state.latest_pareto_front = []
-    st.session_state.latest_knee_point = None
-    st.session_state.drift_events = []
+    reset_session_state()
     st.rerun()
 
 if abrupt_drift_clicked:
@@ -274,26 +316,14 @@ if abrupt_drift_clicked:
     )
 
 if manual_ga_clicked:
-    if len(st.session_state.recent_vectors_buffer) >= config.evolution.min_eval_buffer:
+    # Manual trigger for demonstrations: swaps immediately on the most recent
+    # window of documents instead of waiting for a drift alarm.
+    if len(st.session_state.recent_raw_buffer) >= config.evolution.min_eval_buffer:
         with st.spinner("Optymalizacja wielokryterialna NSGA-II..."):
-            best_knee, front, _ = st.session_state.optimizer.evolve(
-                data_buffer=np.array(st.session_state.recent_vectors_buffer),
-                current_params={
-                    "epsilon": float(st.session_state.clusterer.model.epsilon),
-                    "decaying_factor": float(
-                        st.session_state.clusterer.model.decaying_factor
-                    ),
-                    "mu": int(st.session_state.clusterer.model.mu),
-                },
-            )
-            st.session_state.latest_pareto_front = front
-            st.session_state.latest_knee_point = best_knee
-            st.session_state.clusterer.hot_swap_model(
-                best_knee.params, np.array(st.session_state.recent_vectors_buffer)
-            )
-            st.sidebar.success(
-                f"Wymuszono Hot-Swap: eps={best_knee.params['epsilon']:.3f}, decay={best_knee.params['decaying_factor']:.3f}"
-            )
+            compromise = swap_model(np.array(st.session_state.recent_raw_buffer))
+        st.sidebar.success(
+            f"Wymieniono model: ε={compromise.params['epsilon']:.3f}, λ={compromise.params['decaying_factor']:.3f}"
+        )
     else:
         st.sidebar.warning(
             f"Niewystarczająca liczba dokumentów w buforze (wymagane min. {config.evolution.min_eval_buffer})."
@@ -344,169 +374,78 @@ def ingest_batch(current_b_size):
         convert_to_numpy=True,
     )
 
-    # IPCA Dimensionality Reduction
-    if not st.session_state.ipca_fitted:
-        if len(sbert_vecs) >= config.ml.pca_components_num:
-            st.session_state.ipca.partial_fit(sbert_vecs)
-            st.session_state.ipca_fitted = True
-
-    reduced_vecs = normalize(st.session_state.ipca.transform(sbert_vecs))
+    # IPCA projection (frozen between model swaps)
+    reduced_vecs = st.session_state.projector.transform(sbert_vecs)
 
     # Cluster Update
     batch_macro_preds = st.session_state.clusterer.update(
         reduced_vecs, labels=batch_labels
     )
-    if hasattr(st.session_state.clusterer, "last_batch_micro_preds"):
-        batch_micro_preds = st.session_state.clusterer.last_batch_micro_preds
-    else:
-        batch_micro_preds = [
-            st.session_state.clusterer.model.predict_one(x)
-            for x, _ in stream.iter_array(reduced_vecs)
-        ]
-
     metrics = st.session_state.clusterer.get_metrics()
     st.session_state.total_docs_processed += len(batch_texts)
 
-    # Buffer & Drift Evaluation
-    st.session_state.recent_vectors_buffer.extend(reduced_vecs)
-    st.session_state.recent_2d_points.extend(reduced_vecs[:, :2])
-    st.session_state.recent_labels.extend(batch_labels)
-    st.session_state.recent_texts.extend(batch_texts)
-    st.session_state.recent_macro_preds.extend(batch_macro_preds)
-    st.session_state.recent_micro_preds.extend(batch_micro_preds)
-
+    # Recent-window buffers (plots, sample documents, manual NSGA-II)
     w_size = config.denstream.window_size
-    if len(st.session_state.recent_vectors_buffer) > w_size:
-        st.session_state.recent_vectors_buffer = st.session_state.recent_vectors_buffer[
-            -w_size:
-        ]
-        st.session_state.recent_2d_points = st.session_state.recent_2d_points[-w_size:]
-        st.session_state.recent_labels = st.session_state.recent_labels[-w_size:]
-        st.session_state.recent_texts = st.session_state.recent_texts[-w_size:]
-        st.session_state.recent_macro_preds = st.session_state.recent_macro_preds[
-            -w_size:
-        ]
-        st.session_state.recent_micro_preds = st.session_state.recent_micro_preds[
-            -w_size:
-        ]
+    st.session_state.recent_vectors_buffer = (st.session_state.recent_vectors_buffer + list(reduced_vecs))[-w_size:]
+    st.session_state.recent_raw_buffer = (st.session_state.recent_raw_buffer + list(sbert_vecs))[-w_size:]
+    st.session_state.recent_2d_points = (st.session_state.recent_2d_points + list(reduced_vecs[:, :2]))[-w_size:]
+    st.session_state.recent_labels = (st.session_state.recent_labels + batch_labels)[-w_size:]
+    st.session_state.recent_texts = (st.session_state.recent_texts + batch_texts)[-w_size:]
+    st.session_state.recent_macro_preds = (st.session_state.recent_macro_preds + batch_macro_preds)[-w_size:]
 
-    # Compute a reactive outlier ratio based on how many documents in this batch
-    # were unassigned (micro_pred == -1) and fell into the outlier buffer.
-    # This is much more accurate than n_o / (n_p + n_o) because o-micro-clusters
-    # get promoted to p-micro-clusters within the batch loop.
-    n_p = metrics["n_micro_clusters"]
-    n_o = metrics["n_outlier_clusters"]
-    raw_outlier_ratio = float(n_o / max(1, n_p + n_o))
-
-    # --- CONSOLE LOG: batch snapshot (printed every batch for easy debugging) ---
-    concept = st.session_state.get("current_concept", "A")
-    drift_active = f"Concept {concept}"
     sil = metrics.get("silhouette") or 0.0
+    shift = metrics.get("centroid_shift")
     pur = (metrics.get("purity") or 0.0) * 100
     print(
         f"[BATCH #{st.session_state.total_docs_processed:>5}] "
-        f"{drift_active} | "
-        f"micro={n_p} macro={metrics['n_macro_clusters']} o={n_o} | "
-        f"Purity={pur:.1f}% Sil={sil:.4f} R_out={raw_outlier_ratio:.3f} | "
-        f"ε={getattr(st.session_state.clusterer.model, 'epsilon', 0):.3f} "
-        f"λ={getattr(st.session_state.clusterer.model, 'decaying_factor', 0):.4f}"
+        f"Concept {st.session_state.current_concept} | "
+        f"micro={metrics['n_micro_clusters']} macro={metrics['n_macro_clusters']} | "
+        f"Purity={pur:.1f}% Sil={sil:.4f} Shift={shift if shift is None else round(shift, 3)} | "
+        f"ε={st.session_state.clusterer.model.epsilon:.3f} "
+        f"λ={st.session_state.clusterer.model.decaying_factor:.4f}"
     )
 
+    # Drift detection and model swap, as in the thesis 2 experiment: an alarm
+    # starts collecting a buffer of post-drift documents; once it is full,
+    # IPCA is re-fitted, NSGA-II runs and the new model is swapped in.
     is_drift = st.session_state.drift_detector.update(
-        current_silhouette=metrics["silhouette"] or 0.0,
-        n_micro_clusters=n_p,
-        n_outlier_clusters=n_o,
-        outlier_ratio=raw_outlier_ratio,
-        n_macro_clusters=metrics.get("n_macro_clusters"),
+        current_silhouette=sil, centroid_shift=shift
     )
-
     if is_drift:
+        st.session_state.detection_events.append(st.session_state.total_docs_processed)
+        print(f"🚨 DRIFT DETECTED @ doc #{st.session_state.total_docs_processed}")
         if disable_adaptation:
-            st.toast("🚨 DRYF WYKRYTY! (Ale adaptacja zablokowana)", icon="🛑")
-            print(f"\n{'=' * 70}")
-            print(
-                f"🚨 DRIFT DETECTED @ doc #{st.session_state.total_docs_processed} [ADAPTATION BLOCKED]"
+            st.toast("🚨 Wykryto dryf (adaptacja zablokowana)", icon="🛑")
+        elif not st.session_state.collecting_for_swap:
+            st.toast(
+                f"🚨 Wykryto dryf! Zbieranie {config.evolution.hotswap_buffer_size} nowych dokumentów przed optymalizacją NSGA-II...",
+                icon="🚨",
             )
-            print(f"{'=' * 70}\n")
-        else:
-            st.toast("🚨 DRYF POJĘĆ WYKRYTY! Uruchamianie NSGA-II...", icon="🚨")
-            print(f"\n{'=' * 70}")
-            print(f"🚨 DRIFT DETECTED @ doc #{st.session_state.total_docs_processed}")
-            print(
-                f"   Sil={sil:.4f} R_out={raw_outlier_ratio:.3f} "
-                f"n_macro={metrics['n_macro_clusters']}"
-            )
-            print(f"{'=' * 70}\n")
+            st.session_state.collecting_for_swap = True
+            st.session_state.swap_buffer = []
 
-    if (
-        is_drift
-        and not disable_adaptation
-        and len(st.session_state.recent_vectors_buffer)
-        >= config.evolution.min_eval_buffer
-    ):
-        print(
-            f"⚙️  NSGA-II starting (buffer={len(st.session_state.recent_vectors_buffer)} docs, "
-            f"eps_bounds=[{config.evolution.param_bounds['epsilon'][0]}, "
-            f"{config.evolution.param_bounds['epsilon'][1]}])..."
-        )
-        with st.spinner("⚙️ Optymalizacja NSGA-II w toku..."):
-            best_knee, front, _ = st.session_state.optimizer.evolve(
-                data_buffer=np.array(st.session_state.recent_vectors_buffer),
-                current_params={
-                    "epsilon": float(st.session_state.clusterer.model.epsilon),
-                    "decaying_factor": float(
-                        st.session_state.clusterer.model.decaying_factor
-                    ),
-                    "mu": int(st.session_state.clusterer.model.mu),
-                },
-            )
-        st.session_state.latest_pareto_front = front
-        st.session_state.latest_knee_point = best_knee
-        print(
-            f"✅ NSGA-II done | Front size={len(front)} | "
-            f"Knee: ε={best_knee.params['epsilon']:.4f} "
-            f"λ={best_knee.params['decaying_factor']:.4f} "
-            f"Quality={best_knee.quality_score:.4f} Complexity={best_knee.complexity_score:.4f}"
-        )
-
-        # Apply Adaptation Strategy
-        st.session_state.clusterer.hot_swap_model(
-            best_knee.params, np.array(st.session_state.recent_vectors_buffer)
-        )
-        st.toast("✅ Zastosowano strategię: Window-Trained Hot-Swap!")
-        print("🔄 ADAPTATION: Hot-Swap")
-
-        st.session_state.drift_detector.steps_since_last_drift = 0
-        st.session_state.drift_detector.history_quality.clear()
-
-        metrics = st.session_state.clusterer.get_metrics()
-        print(
-            f"   Post-adaptation: micro={metrics['n_micro_clusters']} "
-            f"macro={metrics['n_macro_clusters']} "
-            f"ε={getattr(st.session_state.clusterer.model, 'epsilon', 0):.4f}\n"
-        )
+    if st.session_state.collecting_for_swap:
+        st.session_state.swap_buffer.extend(sbert_vecs)
+        if len(st.session_state.swap_buffer) >= config.evolution.hotswap_buffer_size:
+            with st.spinner("⚙️ Optymalizacja NSGA-II w toku..."):
+                swap_model(np.array(st.session_state.swap_buffer))
+            st.session_state.collecting_for_swap = False
+            st.session_state.swap_buffer = []
+            st.toast("✅ Wdrożono nowy model (IPCA + DenStream)")
+            metrics = st.session_state.clusterer.get_metrics()
 
     st.session_state.history_records.append(
         {
             "docs": st.session_state.total_docs_processed,
             "purity": metrics["purity"],
             "silhouette": metrics["silhouette"],
+            "centroid_shift": metrics["centroid_shift"],
             "n_micro": metrics["n_micro_clusters"],
             "n_macro": metrics["n_macro_clusters"],
-            "outlier_ratio": raw_outlier_ratio,
-            "sil_threshold": getattr(
-                st.session_state.drift_detector, "current_threshold", None
-            ),
+            "sil_threshold": st.session_state.drift_detector.current_threshold,
             "latency_ms": metrics["latency_ms_per_doc"],
-            "eps": getattr(
-                st.session_state.clusterer.model, "epsilon", config.denstream.epsilon
-            ),
-            "mu": getattr(st.session_state.clusterer.model, "mu", config.denstream.mu),
-            "decay": getattr(
-                st.session_state.clusterer.model,
-                "decaying_factor",
-                config.denstream.decaying_factor,
-            ),
+            "eps": st.session_state.clusterer.model.epsilon,
+            "decay": st.session_state.clusterer.model.decaying_factor,
         }
     )
 
@@ -785,31 +724,38 @@ elif selected_view == "Telemetria i detekcja dryfu":
         )
         st.plotly_chart(fig_sil, width="stretch")
 
-        fig_out = go.Figure()
-        fig_out.add_trace(
+        fig_shift = go.Figure()
+        fig_shift.add_trace(
             go.Scatter(
                 x=df_hist["docs"],
-                y=df_hist["outlier_ratio"],
+                y=df_hist["centroid_shift"],
                 mode="lines",
-                name="Wskaźnik odstających (R_outlier)",
+                name="Przesunięcie centroidów makroklastrów",
                 line=dict(color="#e67e22", width=2),
             )
         )
-        fig_out.add_hline(
-            y=config.drift.outlier_surge_threshold,
+        fig_shift.add_hline(
+            y=config.drift.centroid_shift_threshold,
             line_dash="dash",
             line_color="#333333",
-            annotation_text=f"Próg alarmowy dryfu R_outlier ({config.drift.outlier_surge_threshold * 100:.0f}%)",
+            annotation_text=f"Próg alarmowy ({config.drift.centroid_shift_threshold})",
         )
         for d in st.session_state.drift_events:
-            fig_out.add_vline(x=d, line_dash="dash", line_color="red")
-        fig_out.update_layout(
-            title="Wskaźnik obserwacji odstających R_outlier (Sygnał dryfu)",
+            fig_shift.add_vline(x=d, line_dash="dash", line_color="red")
+        for d in st.session_state.detection_events:
+            fig_shift.add_vline(x=d, line_dash="dot", line_color="#8e44ad")
+        fig_shift.update_layout(
+            title="Przesunięcie centroidów makroklastrów (sygnał dryfu)",
             xaxis_title="Liczba przetworzonych dokumentów",
-            yaxis_title="Wskaźnik R_outlier",
+            yaxis_title="Średnie przesunięcie",
             height=300,
         )
-        st.plotly_chart(fig_out, width="stretch")
+        st.plotly_chart(fig_shift, width="stretch")
+        st.caption(
+            f"Czerwone linie – wstrzyknięty dryf, fioletowe – wykrycie dryfu. Sygnał jest aktywny po "
+            f"{config.drift.centroid_shift_min_warmup_steps} partiach "
+            f"({config.drift.centroid_shift_min_warmup_steps * batch_size} dokumentach) od startu."
+        )
 
         fig_params = go.Figure()
         fig_params.add_trace(

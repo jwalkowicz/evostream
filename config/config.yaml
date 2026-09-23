@@ -27,6 +27,8 @@ ml:
   embedding_model: "all-MiniLM-L6-v2"
   pca_components_num: 16
   use_pca: true
+  ipca_warmup_size: 300
+  batch_size: 50
 
 denstream:
   epsilon: 0.10
@@ -45,7 +47,6 @@ drift:
   window_size: 20
   min_warmup_steps: 5
   quality_drop_sigma: 2.5
-  outlier_surge_threshold: 0.30
   cooldown_steps: 20
   centroid_shift_threshold: 0.18
   divergence_threshold: 0.25
@@ -67,8 +68,9 @@ evolution:
   beta: 0.75
   n_samples_init: 1
   min_eval_buffer: 40
+  hotswap_buffer_size: 500
   param_bounds:
-    epsilon: [0.05, 0.15]
+    epsilon: [0.05, 0.40]
     decaying_factor: [0.005, 0.08]
 
 postgres:

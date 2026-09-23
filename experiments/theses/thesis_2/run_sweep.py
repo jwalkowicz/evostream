@@ -28,7 +28,7 @@ from src.core.logger import logger
 
 # Small subset for validating the pipeline before committing to the full grid:
 # the default combo, plus the opposite corner of the (in-bounds) grid.
-QUICK_COMBOS: List[Tuple[float, float]] = [(0.10, 0.005), (0.15, 0.08)]
+QUICK_COMBOS: List[Tuple[float, float]] = [(0.10, 0.005), (0.40, 0.08)]
 
 DEFAULT_WORKERS = 4
 

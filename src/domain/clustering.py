@@ -1,7 +1,7 @@
 import collections
 import math
 import time
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 from river import cluster, stream
@@ -46,6 +46,49 @@ def set_river_radius_fix(enabled: bool) -> None:
 set_river_radius_fix(config.denstream.fix_river_radius)
 
 
+def micro_cluster_centers(model: cluster.DenStream) -> Tuple[List[Any], np.ndarray]:
+    """Keys and centre vectors of the model's current p-micro-clusters."""
+    t = getattr(model, "timestamp", 0)
+    p_mcs = getattr(model, "p_micro_clusters", {})
+    keys = list(p_mcs.keys())
+    centers = []
+    for k in keys:
+        c = p_mcs[k].calc_center(t)
+        centers.append([c[dim] for dim in range(len(c))])
+    return keys, np.asarray(centers, dtype=np.float64)
+
+
+def group_micro_clusters(centers: np.ndarray, n_macro_clusters: int) -> np.ndarray:
+    """Offline phase: groups p-micro-cluster centres into n_macro_clusters
+    macro-clusters (average-linkage agglomerative clustering, Euclidean
+    distance). Shared by the stream clusterer and by the NSGA-II fitness, so
+    candidates are scored with the same macro-clusters the system deploys.
+    With fewer centres than n_macro_clusters, each centre is its own group.
+    """
+    if len(centers) < n_macro_clusters:
+        return np.arange(len(centers))
+    agg = AgglomerativeClustering(
+        n_clusters=n_macro_clusters, metric="euclidean", linkage="average"
+    )
+    return agg.fit_predict(centers)
+
+
+def purity_score(y_true: List[Any], y_pred: List[int]) -> Optional[float]:
+    """Share of documents belonging to the dominant true category of their
+    predicted cluster. Documents predicted as noise (-1) are left out."""
+    if not y_true or not y_pred or len(y_true) != len(y_pred):
+        return None
+    clusters = collections.defaultdict(list)
+    for t, p in zip(y_true, y_pred):
+        if p != -1:
+            clusters[p].append(t)
+    if not clusters:
+        return 0.0
+    total = sum(len(v) for v in clusters.values())
+    correct = sum(collections.Counter(v).most_common(1)[0][1] for v in clusters.values())
+    return correct / total
+
+
 class StreamClusterer:
     def __init__(
         self,
@@ -88,44 +131,12 @@ class StreamClusterer:
         self.centroid_history = collections.deque(maxlen=centroid_shift_lookback_batches + 1)
 
     def _cluster_offline(self, n_macro_clusters: int):
-        """
-        Custom offline phase.
-        Extracts p-micro-cluster centers and applies Agglomerative Clustering.
-        """
-        t = getattr(self.model, "timestamp", 0)
-        p_mcs = getattr(self.model, "p_micro_clusters", {})
-
-        self.micro_to_macro = {}
-        mc_keys = list(p_mcs.keys())
-
-        if len(mc_keys) == 0:
-            self.n_macro_clusters = 0
-            return
-
-        if len(mc_keys) < n_macro_clusters:
-            for i, k in enumerate(mc_keys):
-                self.micro_to_macro[k] = i
-            self.n_macro_clusters = len(mc_keys)
-            return
-
-        centers = []
-        for k in mc_keys:
-            c = p_mcs[k].calc_center(t)
-            max_dim = max(c.keys()) + 1 if c else 16
-            c_arr = [c.get(dim, 0.0) for dim in range(max_dim)]
-            centers.append(c_arr)
-
-        agg = AgglomerativeClustering(
-            n_clusters=n_macro_clusters, metric="euclidean", linkage="average"
-        )
-        labels = agg.fit_predict(centers)
-
-        for k, label in zip(mc_keys, labels):
-            self.micro_to_macro[k] = int(label)
-
-        self.n_macro_clusters = n_macro_clusters
+        keys, centers = micro_cluster_centers(self.model)
+        labels = group_micro_clusters(centers, n_macro_clusters)
+        self.micro_to_macro = {k: int(label) for k, label in zip(keys, labels)}
+        self.n_macro_clusters = len(set(self.micro_to_macro.values()))
         logger.info(
-            f"Custom Offline Phase: mapped {len(mc_keys)} p-micro-clusters to {n_macro_clusters} macro-clusters."
+            f"Custom Offline Phase: mapped {len(keys)} p-micro-clusters to {self.n_macro_clusters} macro-clusters."
         )
 
     def predict_one(self, x: dict) -> int:
@@ -283,24 +294,6 @@ class StreamClusterer:
             "macro_clusters": self.micro_to_macro,
         }
 
-    def _calculate_purity(
-        self, y_true: List[Any], y_pred: List[int]
-    ) -> Optional[float]:
-        if not y_true or not y_pred or len(y_true) != len(y_pred):
-            return None
-        clusters = collections.defaultdict(list)
-        for t, p in zip(y_true, y_pred):
-            if p != -1:
-                clusters[p].append(t)
-        if not clusters:
-            return 0.0
-        correct = 0
-        total = sum(len(v) for v in clusters.values())
-        for cluster_labels in clusters.values():
-            counts = collections.Counter(cluster_labels)
-            correct += counts.most_common(1)[0][1]
-        return correct / total if total > 0 else 0.0
-
     def get_metrics(self) -> dict:
         t = getattr(self.model, "timestamp", 0)
         p_mcs = getattr(self.model, "p_micro_clusters", {})
@@ -362,7 +355,7 @@ class StreamClusterer:
         ):
             y_true = list(self.window_true_labels)
             y_pred = list(self.window_macro_preds)
-            purity = self._calculate_purity(y_true, y_pred)
+            purity = purity_score(y_true, y_pred)
             if purity is not None:
                 metrics_dict["purity"] = round(purity, 4)
             try:

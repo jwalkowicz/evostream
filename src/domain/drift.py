@@ -8,20 +8,17 @@ from src.core.logger import logger
 
 class UnsupervisedDriftDetector:
     """
-    Unsupervised concept drift detector.
-    Monitors three signals:
-    1. Outlier buffer rate spike. Kept for other callers (the live daemon and
-       dashboard use it), but on the thesis-2 experiment's dataset/pipeline
-       it never actually contributes a detection: DenStream's outlier-cluster
-       weight never rose above ~1% of total cluster mass even during the
-       real, engineered drift, well under any reasonable threshold.
-    2. Degradation of rolling cluster score (silhouette), relative to its own
+    Unsupervised concept drift detector. Monitors two signals:
+    1. Degradation of rolling cluster score (silhouette), relative to its own
        recent history AND below an absolute floor, sustained for several
        consecutive batches.
-    3. Macro-cluster centroids moving in the embedding space (purely
-       geometric - independent of both clustering quality and micro-cluster
-       bookkeeping, so it doesn't just re-derive the same information as
-       signals 1-2).
+    2. Macro-cluster centroids moving in the embedding space (purely
+       geometric - independent of clustering quality).
+
+    An earlier version also monitored the share of outlier micro-cluster
+    weight. It never contributed a detection: on the thesis 2 stream that
+    share stayed below ~1% of the total weight even during the engineered
+    drift, far under any reasonable threshold, so it was removed.
     """
 
     def __init__(
@@ -29,7 +26,6 @@ class UnsupervisedDriftDetector:
         window_size: int = 20,
         min_warmup_steps: int = 10,
         quality_drop_sigma: float = 2.0,
-        outlier_surge_threshold: float = 0.35,
         cooldown_steps: int = 10,
         centroid_shift_threshold: float = 0.20,
         consecutive_drops_required: int = 2,
@@ -39,7 +35,6 @@ class UnsupervisedDriftDetector:
         self.window_size = window_size
         self.min_warmup_steps = min_warmup_steps
         self.quality_drop_sigma = quality_drop_sigma
-        self.outlier_surge_threshold = outlier_surge_threshold
         self.cooldown_steps = cooldown_steps
         self.centroid_shift_threshold = centroid_shift_threshold
         # A single anomalous batch can transiently crash the silhouette score
@@ -62,41 +57,23 @@ class UnsupervisedDriftDetector:
         # The centroid-shift signal is unreliable for a while after a
         # (re)start: the very first clusters are still forming, so centroids
         # swing a lot with no relation to real drift. This settling period is
-        # longer than signals 1-2 need, so it gets its own, later warmup gate
-        # rather than sharing min_warmup_steps.
+        # longer than the quality signal needs, so it gets its own, later
+        # warmup gate rather than sharing min_warmup_steps.
         self.centroid_shift_min_warmup_steps = centroid_shift_min_warmup_steps
 
         self.history_quality = collections.deque(maxlen=window_size)
-        self.history_cms = collections.deque(maxlen=window_size)
-        self.previous_n_macro = 0
 
         self.total_steps_seen = 0
         self.steps_since_last_drift = 0
         self.total_drifts_detected = 0
         self.current_threshold = None
 
-    def update(
-        self,
-        current_silhouette: float,
-        n_micro_clusters: int,
-        n_outlier_clusters: int,
-        outlier_ratio: Optional[float] = None,
-        n_macro_clusters: Optional[int] = None,
-        centroid_shift: Optional[float] = None,
-    ) -> bool:
+    def update(self, current_silhouette: float, centroid_shift: Optional[float] = None) -> bool:
         """
         Evaluates current stream step. Returns True if concept drift is detected.
         """
         self.total_steps_seen += 1
         self.steps_since_last_drift += 1
-
-        if outlier_ratio is None:
-            total_clusters = n_micro_clusters + n_outlier_clusters
-            outlier_ratio = (
-                float(n_outlier_clusters / total_clusters)
-                if total_clusters > 0
-                else 0.0
-            )
 
         is_drift = False
         drift_reasons = []
@@ -105,14 +82,7 @@ class UnsupervisedDriftDetector:
             and self.steps_since_last_drift >= self.cooldown_steps
         )
 
-        # Signal 1: outlier surge (single-batch trigger).
-        if can_trigger and outlier_ratio >= self.outlier_surge_threshold:
-            is_drift = True
-            drift_reasons.append(
-                f"Outlier surge (R_outlier: {outlier_ratio * 100:.1f}% >= threshold: {self.outlier_surge_threshold * 100:.1f}%)"
-            )
-
-        # Signal 2: quality degradation. Tracked as a persistence counter
+        # Signal 1: quality degradation. Tracked as a persistence counter
         # (updated every step, regardless of cooldown) so genuine sustained
         # drift is recognized promptly once cooldown lifts, but a single
         # anomalous batch - which can transiently crash the silhouette score
@@ -136,13 +106,13 @@ class UnsupervisedDriftDetector:
                     f"{self._consecutive_quality_drops} consecutive batches)"
                 )
 
-        # Signal 3: macro-cluster centroids have moved by more than an
-        # absolute distance threshold in the embedding space. Unlike signals
-        # 1-2, this is a fixed absolute cutoff, not a rolling-baseline
+        # Signal 2: macro-cluster centroids have moved by more than an
+        # absolute distance threshold in the embedding space. Unlike signal
+        # 1, this is a fixed absolute cutoff, not a rolling-baseline
         # comparison - it doesn't care whether clustering quality is good or
         # bad, only whether the cluster centers themselves have relocated.
         # Gated by its own, later warmup: centroids are still settling for a
-        # while after a (re)start, long after signals 1-2 are already trusted.
+        # while after a (re)start, long after signal 1 is already trusted.
         centroid_shift_ready = self.total_steps_seen >= self.centroid_shift_min_warmup_steps
         if can_trigger and centroid_shift_ready and centroid_shift is not None and centroid_shift >= self.centroid_shift_threshold:
             is_drift = True
@@ -160,7 +130,5 @@ class UnsupervisedDriftDetector:
 
         if current_silhouette is not None and current_silhouette > 0:
             self.history_quality.append(current_silhouette)
-        if n_macro_clusters is not None:
-            self.previous_n_macro = n_macro_clusters
 
         return is_drift

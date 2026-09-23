@@ -15,6 +15,7 @@ from sklearn.metrics import silhouette_score
 
 from src.core.config import config
 from src.core.logger import logger
+from src.domain.clustering import group_micro_clusters, micro_cluster_centers
 
 
 @dataclass
@@ -40,14 +41,67 @@ class Individual:
         )
 
 
+def evaluate_parameters(
+    dict_buffer: List[Dict[int, float]],
+    epsilon: float,
+    decaying_factor: float,
+    n_macro_clusters: int,
+    mu: int,
+    n_samples_init: int,
+) -> Tuple[float, float, int]:
+    """
+    Fitness of one candidate (epsilon, decaying_factor): trains a fresh
+    DenStream on the buffer, groups its p-micro-clusters into macro-clusters
+    with the system's offline phase and returns (quality, complexity,
+    number of p-micro-clusters):
+
+      quality    = silhouette of the p-micro-cluster centres, labelled by
+                   their macro-cluster,
+      complexity = N_micro / |buffer| + 0.05 * ln(1 + N_micro / N_macro).
+
+    Degenerate candidates get penalty values: (-1, 1) with fewer than two
+    p-micro-clusters, (-0.5, 0.8) with too few to form the macro-clusters.
+    """
+    try:
+        model = cluster.DenStream(
+            epsilon=epsilon,
+            mu=mu,
+            decaying_factor=decaying_factor,
+            beta=config.denstream.beta,
+            n_samples_init=n_samples_init,
+        )
+        # River's micro-clusters keep a reference to the dict they were
+        # created from and add later points into it, so each candidate gets
+        # its own copies - otherwise it would corrupt the shared buffer for
+        # every candidate evaluated after it.
+        for row in dict_buffer:
+            model.learn_one(dict(row))
+
+        _, centers = micro_cluster_centers(model)
+        n_micro = len(centers)
+
+        if n_micro < 2:
+            return -1.0, 1.0, n_micro
+        if n_micro <= n_macro_clusters:
+            return -0.5, 0.8, n_micro
+
+        macro_labels = group_micro_clusters(centers, n_macro_clusters)
+        quality = float(silhouette_score(centers, macro_labels))
+        complexity = n_micro / len(dict_buffer) + 0.05 * float(np.log1p(n_micro / n_macro_clusters))
+        return quality, complexity, n_micro
+    except Exception:
+        # Fallback penalty for parameters the model cannot run with
+        return -1.0, 1.0, 0
+
+
 class StreamClusteringOptimizationProblem(ElementwiseProblem):
     """
     Multi-objective optimization problem for streaming text clustering.
     2D chromosome: theta = (epsilon, decaying_factor) in R^2.
 
-    Objectives:
-      1. f1(theta) = -Q_tilde(theta)
-      2. f2(theta) = C_struct(theta)
+    Objectives (both minimised by pymoo): f1 = -quality, f2 = complexity,
+    as computed by evaluate_parameters() - candidates are scored with the
+    same offline phase the system deploys.
     """
 
     def __init__(
@@ -55,81 +109,32 @@ class StreamClusteringOptimizationProblem(ElementwiseProblem):
         data_buffer: np.ndarray,
         xl: np.ndarray,
         xu: np.ndarray,
+        n_macro_clusters: int,
         fixed_mu: int = 3,
         n_samples_init: int = 30,
-        labels_buffer: Optional[List[Any]] = None,
     ):
         super().__init__(n_var=2, n_obj=2, xl=xl, xu=xu)
-        self.data_buffer = data_buffer
+        self.n_macro_clusters = n_macro_clusters
         self.fixed_mu = fixed_mu
         self.n_samples_init = n_samples_init
-        self.labels_buffer = labels_buffer
         self.dict_buffer = [dict(enumerate(row)) for row in data_buffer]
 
     def _evaluate(self, x, out, *args, **kwargs):
-        try:
-            eps = float(x[0])
-            decay = float(x[1])
-            mu = self.fixed_mu
-
-            model = cluster.DenStream(
-                epsilon=eps,
-                mu=mu,
-                decaying_factor=decay,
-                beta=config.denstream.beta,
-                n_samples_init=self.n_samples_init,
-            )
-            for row in self.dict_buffer:
-                model.learn_one(row)
-                model.predict_one(row)
-
-            p_mcs = getattr(model, "p_micro_clusters", {})
-            clusters = getattr(model, "clusters", {})
-            n_micro = len(p_mcs)
-            n_macro = len(clusters)
-            t = getattr(model, "timestamp", 0)
-
-            quality_score = -1.0
-            complexity_score = 1.0
-
-            if n_micro >= 2:
-                centers = []
-                macro_labels = []
-
-                for macro_id, mc_list in clusters.items():
-                    for mc in mc_list:
-                        c_dict = mc.calc_center(t)
-                        centers.append([c_dict[i] for i in range(len(c_dict))])
-                        macro_labels.append(macro_id)
-
-                centers_np = np.array(centers, dtype=np.float32)
-
-                if 2 <= n_macro < len(centers_np):
-                    try:
-                        quality_score = float(
-                            silhouette_score(centers_np, macro_labels)
-                        )
-                    except Exception:
-                        quality_score = 0.0
-                    ratio = float(n_micro / max(n_macro, 1))
-                    norm_micro_count = float(n_micro / max(len(self.data_buffer), 1))
-                    complexity_score = norm_micro_count + 0.05 * np.log1p(ratio)
-                else:
-                    quality_score = -0.5
-                    complexity_score = 0.8
-            else:
-                quality_score = -1.0
-                complexity_score = 1.0
-
-            out["F"] = [-quality_score, complexity_score]
-        except Exception:
-            # Fallback penalty for bad parameters
-            out["F"] = [1.0, 1.0]
+        quality, complexity, _ = evaluate_parameters(
+            self.dict_buffer,
+            epsilon=float(x[0]),
+            decaying_factor=float(x[1]),
+            n_macro_clusters=self.n_macro_clusters,
+            mu=self.fixed_mu,
+            n_samples_init=self.n_samples_init,
+        )
+        out["F"] = [-quality, complexity]
 
 
 class NSGAIIOptimizer:
     def __init__(
         self,
+        n_macro_clusters: int,
         population_size: int = 16,
         generations: int = 6,
         crossover_rate: float = 0.8,
@@ -142,6 +147,7 @@ class NSGAIIOptimizer:
         min_eval_buffer: int = 40,
         seed: Optional[int] = None,
     ):
+        self.n_macro_clusters = n_macro_clusters
         self.population_size = population_size
         self.generations = generations
         self.crossover_rate = crossover_rate
@@ -196,9 +202,11 @@ class NSGAIIOptimizer:
             "offline_eps": config.denstream.offline_eps,
         }
 
-    def detect_knee_point(self, pareto_front: List[Individual]) -> Individual:
+    def select_compromise_solution(self, pareto_front: List[Individual]) -> Individual:
         """
-        Selects the balanced compromise Knee Point solution on the non-dominated Pareto front.
+        Selects the compromise solution from the Pareto front with the
+        pseudo-weights method (pymoo): the solution whose pseudo-weight vector
+        is closest to equal weights for both objectives.
         """
         if len(pareto_front) == 0:
             return Individual(params=self._get_fallback_params())
@@ -214,7 +222,6 @@ class NSGAIIOptimizer:
     def evolve(
         self,
         data_buffer: np.ndarray,
-        labels_buffer: Optional[List[Any]] = None,
         current_params: Optional[Dict[str, float]] = None,
     ) -> Tuple[Individual, List[Individual], List[Dict[str, Any]]]:
         """
@@ -234,9 +241,9 @@ class NSGAIIOptimizer:
             data_buffer=data_buffer,
             xl=self.xl,
             xu=self.xu,
+            n_macro_clusters=self.n_macro_clusters,
             fixed_mu=self.fixed_mu,
             n_samples_init=self.n_samples_init,
-            labels_buffer=labels_buffer,
         )
 
         algorithm = NSGA2(
@@ -267,9 +274,9 @@ class NSGAIIOptimizer:
 
         if not pareto_front:
             fallback_params = self._get_fallback_params(current_params)
-            best_knee_point = Individual(params=fallback_params)
+            compromise = Individual(params=fallback_params)
         else:
-            best_knee_point = self.detect_knee_point(pareto_front)
+            compromise = self.select_compromise_solution(pareto_front)
 
         history = [
             {
@@ -291,11 +298,11 @@ class NSGAIIOptimizer:
 
         logger.success(
             f"Pymoo NSGA-II Complete in {opt_latency_ms:.1f}ms | Front Size: {len(pareto_front)} | "
-            f"Knee Point: eps={best_knee_point.params['epsilon']}, "
-            f"mu={best_knee_point.params['mu']}, "
-            f"decay={best_knee_point.params['decaying_factor']}, "
-            f"Quality Surrogate: {best_knee_point.quality_score:.4f}, "
-            f"Complexity Proxy: {best_knee_point.complexity_score:.4f}"
+            f"Compromise solution: eps={compromise.params['epsilon']}, "
+            f"mu={compromise.params['mu']}, "
+            f"decay={compromise.params['decaying_factor']}, "
+            f"Quality Surrogate: {compromise.quality_score:.4f}, "
+            f"Complexity Proxy: {compromise.complexity_score:.4f}"
         )
 
-        return best_knee_point, pareto_front, history
+        return compromise, pareto_front, history

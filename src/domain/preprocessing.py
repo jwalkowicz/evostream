@@ -4,8 +4,8 @@ from typing import List, Optional
 
 import numpy as np
 from bs4 import BeautifulSoup
-from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.decomposition import IncrementalPCA
+from sklearn.preprocessing import normalize
 
 
 class TextPreprocessor:
@@ -26,71 +26,41 @@ class TextPreprocessor:
         return [self.clean(t) for t in texts]
 
 
-class EmbeddingTransformer(BaseEstimator, TransformerMixin):
+class StreamProjector:
     """
-    Transformer for text semantic encoding via SBERT and optional
-    incremental dimensionality reduction via IncrementalPCA.
+    Projects L2-normalised SBERT embeddings into the clustering space, the
+    same way as in the thesis experiments.
+
+    IPCA is fitted once, on an initial buffer of documents, and then frozen:
+    a continuously updated IPCA would rotate the projection basis under the
+    micro-clusters already built in it. It is re-fitted only on a model swap
+    after drift, on post-drift documents. Output vectors are L2-normalised,
+    so Euclidean distance between them reflects cosine similarity.
+
+    With n_components=None the embeddings are passed through unchanged
+    (full-dimensional variant).
     """
 
-    def __init__(self, encoder, pca: Optional[IncrementalPCA] = None):
-        self.encoder = encoder
-        self.pca = pca
-        self.warmup_buffer: List[np.ndarray] = []
-        self._is_pca_fitted = False
+    def __init__(self, n_components: Optional[int]):
+        self.n_components = n_components
+        self.ipca: Optional[IncrementalPCA] = None
 
     @property
-    def output_dim(self) -> int:
-        if self.pca is not None:
-            return self.pca.n_components
-        if hasattr(self.encoder, "get_sentence_embedding_dimension"):
-            return self.encoder.get_sentence_embedding_dimension()
-        return -1
+    def is_fitted(self) -> bool:
+        return self.n_components is None or self.ipca is not None
 
-    def fit(self, X, y=None):
-        return self
-
-    def _update_pca_with_buffer(self, embeddings: np.ndarray):
-        if self.pca is None:
+    def fit(self, embeddings: np.ndarray) -> None:
+        """Fits a fresh IPCA on the given embeddings, replacing any previous one."""
+        if self.n_components is None:
             return
+        ipca = IncrementalPCA(n_components=self.n_components)
+        ipca.partial_fit(np.asarray(embeddings))
+        self.ipca = ipca
 
-        if not self._is_pca_fitted:
-            self.warmup_buffer.extend(embeddings)
-            if len(self.warmup_buffer) >= self.pca.n_components:
-                buffer_array = np.array(self.warmup_buffer)
-                self.pca.partial_fit(buffer_array)
-                self._is_pca_fitted = True
-                self.warmup_buffer.clear()
-        else:
-            if len(embeddings) >= self.pca.n_components:
-                self.pca.partial_fit(embeddings)
-
-    def transform(self, X: List[str]) -> np.ndarray:
-        if not X:
-            return np.empty((0, self.output_dim))
-
-        embeddings = self.encoder.encode(
-            X, show_progress_bar=False, convert_to_numpy=True
-        )
-        if self.pca is not None:
-            if not self._is_pca_fitted:
-                self._update_pca_with_buffer(embeddings)
-                if not self._is_pca_fitted:
-                    return embeddings[:, : self.pca.n_components]
-            return self.pca.transform(embeddings)
-
-        return embeddings
-
-    def fit_transform(self, X: List[str], y=None, **fit_params) -> np.ndarray:
-        if not X:
-            return np.empty((0, self.output_dim))
-
-        embeddings = self.encoder.encode(
-            X, show_progress_bar=False, convert_to_numpy=True
-        )
-        if self.pca is not None:
-            self._update_pca_with_buffer(embeddings)
-            if self._is_pca_fitted:
-                return self.pca.transform(embeddings)
-            return embeddings[:, : self.pca.n_components]
-
-        return embeddings
+    def transform(self, embeddings: np.ndarray) -> np.ndarray:
+        embeddings = np.asarray(embeddings)
+        if self.n_components is None:
+            return normalize(embeddings)
+        if self.ipca is None:
+            raise RuntimeError("StreamProjector.fit() must be called before transform().")
+        return normalize(self.ipca.transform(embeddings))

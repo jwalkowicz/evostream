@@ -62,7 +62,7 @@ PHASE2_CATEGORIES = [
 ]
 SAMPLES_PER_PHASE = 5000
 DRIFT_POINT = SAMPLES_PER_PHASE
-BATCH_SIZE = 50
+BATCH_SIZE = config.ml.batch_size
 # Two separate buffer sizes that used to share one constant:
 # - INITIAL_WARMUP_SIZE: documents sacrificed at stream start to fit the
 #   first IPCA, before either model starts clustering at all.
@@ -73,14 +73,14 @@ BATCH_SIZE = 50
 #   the OLD model keeps running, and slower NSGA-II evaluation (each of its
 #   384 evaluations re-fits DenStream over the whole buffer). Kept separate
 #   so tuning one doesn't also change the unrelated initial cold-start.
-INITIAL_WARMUP_SIZE = 300
+INITIAL_WARMUP_SIZE = config.ml.ipca_warmup_size
 # Validated: buf=500 vs the original buf=300 gave identical pre-swap behavior
 # (buffer size doesn't affect anything before the first swap) but, once
 # triggered, cut ε=0.075's re-trigger count from 5 to 3 and roughly tripled
 # the interval between later re-triggers (1100-1450 docs -> 3450 docs) at
 # effectively no cost to final purity (0.660 -> 0.651) - promoted to the
 # default. Still overridable for isolated comparisons against the old value.
-HOTSWAP_BUFFER_SIZE = int(os.environ.get("HOTSWAP_BUFFER_SIZE", 500))
+HOTSWAP_BUFFER_SIZE = int(os.environ.get("HOTSWAP_BUFFER_SIZE", config.evolution.hotswap_buffer_size))
 
 # Warmup/pretraining strategy for both IPCA and DenStream:
 #   "sequential_prefix" (default): use the first INITIAL_WARMUP_SIZE
@@ -106,16 +106,17 @@ WARMUP_STRATEGY = os.environ.get("WARMUP_STRATEGY", "sequential_prefix")
 RESULT_SUFFIX = ""
 if COOLDOWN_MODE != "asymmetric_own":
     RESULT_SUFFIX += f"__{COOLDOWN_MODE}"
-if HOTSWAP_BUFFER_SIZE != 500:
+if HOTSWAP_BUFFER_SIZE != config.evolution.hotswap_buffer_size:
     RESULT_SUFFIX += f"__buf{HOTSWAP_BUFFER_SIZE}"
 if WARMUP_STRATEGY != "sequential_prefix":
     RESULT_SUFFIX += f"__{WARMUP_STRATEGY}"
 
 # Sweep grid: 5 epsilon x 5 decay = 25 combinations, spanning the full
 # NSGA-II search space defined in config.evolution.param_bounds - epsilon
-# [0.05, 0.15], decaying_factor [0.005, 0.08] - and staying within those
-# bounds on both ends for both parameters (not below, not above).
-SWEEP_EPSILON_VALUES = [0.05, 0.075, 0.10, 0.125, 0.15]
+# [0.05, 0.40], decaying_factor [0.005, 0.08] - and staying within those
+# bounds on both ends for both parameters (not below, not above). The
+# epsilon values match the thesis 1 grid inside these bounds.
+SWEEP_EPSILON_VALUES = [0.05, 0.10, 0.20, 0.30, 0.40]
 SWEEP_DECAY_VALUES = [0.005, 0.02, 0.04, 0.06, 0.08]
 PCA_COMPONENTS = 16
 
@@ -254,6 +255,7 @@ def run_drift_experiment(
         )
 
     opt_hotswap = NSGAIIOptimizer(
+        n_macro_clusters=n_expected_macro,
         population_size=config.evolution.population_size,
         generations=config.evolution.generations,
         crossover_rate=config.evolution.crossover_rate,
@@ -267,7 +269,6 @@ def run_drift_experiment(
         window_size=config.drift.window_size,
         min_warmup_steps=config.drift.min_warmup_steps,
         quality_drop_sigma=config.drift.quality_drop_sigma,
-        outlier_surge_threshold=config.drift.outlier_surge_threshold,
         cooldown_steps=config.drift.cooldown_steps,
         consecutive_drops_required=config.drift.consecutive_drops_required,
         centroid_shift_threshold=config.drift.centroid_shift_threshold,
@@ -279,7 +280,7 @@ def run_drift_experiment(
     collecting_for_hotswap = False
     hotswap_buffer_collected_raw: List[np.ndarray] = []
     # The hot-swap is triggered exclusively by the detector's own signals
-    # (outlier surge / quality drop) - no hardcoded `curr_idx == DRIFT_POINT`
+    # (quality drop / centroid shift) - no hardcoded `curr_idx == DRIFT_POINT`
     # fallback. DRIFT_POINT is only the point at which the underlying data
     # stream switches topics (ground truth for evaluation/plotting); the
     # detector doesn't get to see it, so this is genuinely blind detection.
@@ -311,9 +312,6 @@ def run_drift_experiment(
 
         is_d_hot = drift_det_hotswap.update(
             current_silhouette=m_hot["silhouette"] or 0.0,
-            n_micro_clusters=m_hot["n_micro_clusters"],
-            n_outlier_clusters=m_hot["n_outlier_clusters"],
-            outlier_ratio=m_hot["outlier_ratio"],
             centroid_shift=m_hot["centroid_shift"],
         )
 
@@ -339,11 +337,11 @@ def run_drift_experiment(
                 )
 
                 # 2. Evolve DenStream params for the new embedding space.
-                best_knee, _, _ = opt_hotswap.evolve(data_buffer=new_buffer_proj)
+                compromise, _, _ = opt_hotswap.evolve(data_buffer=new_buffer_proj)
 
                 # 3. Swap in the newly-evolved DenStream instance.
                 c_hotswap.hot_swap_model(
-                    new_params=best_knee.params,
+                    new_params=compromise.params,
                     window_data=new_buffer_proj,
                 )
 
