@@ -230,13 +230,8 @@ def plot_purity_band(timeseries: pd.DataFrame, summary: pd.DataFrame, out_path: 
         ax.fill_between(curves.index, curves.min(axis=1), curves.max(axis=1), color="#2980b9",
                         alpha=0.25, lw=0, label=f"Zakres dla ε ∈ {{{grid}}}")
         ax.plot(curves.index, curves[best_eps[dim]], color="#2980b9", lw=2,
-                label="Najlepsze ε (średnia z 3 permutacji)")
-        name = "d = 384 (bez IPCA)" if dim == 384 else f"d = {dim}"
-        # Every epsilon gives the same purity when the model degenerates to a
-        # single micro-cluster, so no epsilon is "best" there.
-        same_for_all = summary.loc[summary["pca_dim"] == dim, "mean_purity"].nunique() == 1
-        eps_label = "ε dowolne" if same_for_all else f"najlepsze ε = {best_eps[dim]:.2f}".replace(".", ",")
-        ax.set_title(f"{name}, {eps_label}", fontsize=11)
+                label="Najlepsza wartość ε")
+        ax.set_title("d = 384 (bez IPCA)" if dim == 384 else f"d = {dim}", fontsize=11)
         ax.set_ylim(0.0, 1.0)
         ax.set_xlim(0, timeseries["samples_seen"].max())
         ax.grid(True, linestyle="--", alpha=0.6)
