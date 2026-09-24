@@ -19,6 +19,7 @@ import pandas as pd
 from matplotlib.colors import to_rgba
 from matplotlib.lines import Line2D
 
+from experiments.plot_style import decimal_comma, use_polish_number_format
 from experiments.theses.thesis_2.exp_thesis_2_drift import (
     BATCH_SIZE,
     DRIFT_POINT,
@@ -201,9 +202,9 @@ def plot_convergence_heatmaps(dfs: Dict[Tuple[float, float], pd.DataFrame], tail
     for ax, grid, subtitle, fmt in panels:
         im = ax.imshow(grid, cmap="viridis", aspect="auto")
         ax.set_xticks(range(len(DECAY_VALUES)))
-        ax.set_xticklabels([str(d) for d in DECAY_VALUES])
+        ax.set_xticklabels([decimal_comma(d) for d in DECAY_VALUES])
         ax.set_yticks(range(len(EPSILON_VALUES)))
-        ax.set_yticklabels([str(e) for e in EPSILON_VALUES])
+        ax.set_yticklabels([decimal_comma(e) for e in EPSILON_VALUES])
         ax.set_xlabel(r"Startowe $\lambda_0$")
         ax.set_ylabel(r"Startowe $\epsilon_0$")
         ax.set_title(subtitle, fontsize=11)
@@ -214,7 +215,7 @@ def plot_convergence_heatmaps(dfs: Dict[Tuple[float, float], pd.DataFrame], tail
                 val = grid[i, j]
                 if not np.isnan(val):
                     text_color = "white" if val > norm_mid else "black"
-                    ax.text(j, i, fmt.format(val), ha="center", va="center", color=text_color, fontsize=9)
+                    ax.text(j, i, decimal_comma(fmt.format(val)), ha="center", va="center", color=text_color, fontsize=9)
         fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
     plt.tight_layout()
@@ -246,9 +247,9 @@ def plot_trajectory_example(dfs: Dict[Tuple[float, float], pd.DataFrame], combo:
 
     handles = _base_legend_handles() + [
         Line2D([0], [0], color="#2980b9", lw=2.2, label=r"Adaptacyjny $\epsilon(t)$"),
-        Line2D([0], [0], color="#2980b9", ls=":", lw=1.4, label=rf"Start $\epsilon_0={eps}$"),
+        Line2D([0], [0], color="#2980b9", ls=":", lw=1.4, label=rf"Start $\epsilon_0$ = {decimal_comma(eps)}"),
         Line2D([0], [0], color="#8e44ad", lw=2.2, label=r"Adaptacyjny $\lambda(t)$"),
-        Line2D([0], [0], color="#8e44ad", ls=":", lw=1.4, label=rf"Start $\lambda_0={decay}$"),
+        Line2D([0], [0], color="#8e44ad", ls=":", lw=1.4, label=rf"Start $\lambda_0$ = {decimal_comma(decay)}"),
     ]
     plt.tight_layout()
     fig.legend(handles=handles, loc="upper center", ncol=3, frameon=True, bbox_to_anchor=(0.5, 0.0))
@@ -292,6 +293,7 @@ def plot_summary_gain(dfs: Dict[Tuple[float, float], pd.DataFrame], tail_docs: i
 
 
 def main():
+    use_polish_number_format()
     dfs = load_all()
     n_expected = len(EPSILON_VALUES) * len(DECAY_VALUES)
     print(f"Loaded {len(dfs)}/{n_expected} combinations.")

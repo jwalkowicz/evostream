@@ -16,6 +16,7 @@ from sklearn.decomposition import PCA
 from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import normalize
 
+from experiments.plot_style import use_polish_number_format
 from experiments.theses.thesis_1.exp_thesis_1_ipca import load_phase1_stream
 
 RESULTS_DIR = "experiments/dimensionality/results"
@@ -41,6 +42,7 @@ def distance_contrast_ratio(X: np.ndarray) -> float:
 
 
 def plot_curve(dims, values, ylabel, out_path):
+    use_polish_number_format()
     plt.rcParams.update({"font.size": 11, "font.family": "serif"})
     fig, ax = plt.subplots(figsize=(8, 5))
     ax.plot(dims, values, color="#2980b9", linewidth=2.5, marker="o")

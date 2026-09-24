@@ -14,11 +14,13 @@ import time
 from typing import List, Optional
 
 import matplotlib.pyplot as plt
+from matplotlib.ticker import MultipleLocator
 import numpy as np
 import pandas as pd
 from sklearn.decomposition import IncrementalPCA
 from sklearn.preprocessing import normalize
 
+from experiments.plot_style import use_polish_number_format
 from experiments.theses.thesis_2.exp_thesis_2_drift import (
     BATCH_SIZE,
     INITIAL_WARMUP_SIZE,
@@ -203,6 +205,7 @@ def plot_purity_band(timeseries: pd.DataFrame, summary: pd.DataFrame, out_path: 
     epsilon, the band the min-max range over the whole epsilon grid (each
     curve averaged over stream orders), so the figure also shows how
     sensitive every dimension is to epsilon and where the model collapses."""
+    use_polish_number_format()
     plt.rcParams.update({"font.size": 11, "font.family": "serif"})
     dims = sorted(timeseries["pca_dim"].unique(), reverse=True)
     fig, axes = plt.subplots(2, 3, figsize=(12, 6.5), sharex=True, sharey=True)
@@ -225,6 +228,7 @@ def plot_purity_band(timeseries: pd.DataFrame, summary: pd.DataFrame, out_path: 
         ax.set_title("d = 384 (bez IPCA)" if dim == 384 else f"d = {dim}", fontsize=11)
         ax.set_ylim(0.0, 1.0)
         ax.set_xlim(0, timeseries["samples_seen"].max())
+        ax.xaxis.set_major_locator(MultipleLocator(2000))
         ax.grid(True, linestyle="--", alpha=0.6)
 
     for ax in axes[1]:

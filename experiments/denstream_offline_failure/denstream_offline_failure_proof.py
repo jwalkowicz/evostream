@@ -14,6 +14,7 @@ from scipy.spatial.distance import pdist
 from sklearn.decomposition import IncrementalPCA
 from sklearn.preprocessing import normalize
 
+from experiments.plot_style import use_polish_number_format
 from experiments.theses.thesis_1.exp_thesis_1_ipca import load_phase1_stream
 from experiments.theses.thesis_2.exp_thesis_2_drift import BATCH_SIZE, INITIAL_WARMUP_SIZE
 from src.core.config import config
@@ -73,6 +74,7 @@ def main():
 def generate_chart():
     """Distances between p-micro-cluster centres against the offline-phase
     merge threshold 2*epsilon (thesis section 2.3.2, Figure 3)."""
+    use_polish_number_format()
     df = pd.read_csv(f"{RESULTS_DIR}/denstream_failure_metrics.csv")
 
     plt.rcParams.update({"font.size": 11, "font.family": "serif"})

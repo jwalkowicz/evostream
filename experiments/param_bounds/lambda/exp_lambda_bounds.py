@@ -26,6 +26,7 @@ from experiments.param_bounds.common.validation_stream import (
     VALIDATION_SAMPLES_PER_PHASE as SAMPLES_PER_PHASE,
     load_validation_stream,
 )
+from experiments.plot_style import use_polish_number_format
 from experiments.theses.thesis_1.exp_thesis_1_ipca import STREAM_SEEDS, shuffle_stream
 from experiments.theses.thesis_2.exp_thesis_2_drift import BATCH_SIZE, INITIAL_WARMUP_SIZE
 from src.core.config import config
@@ -112,6 +113,7 @@ def run_one(seed: int, decay: float) -> Tuple[dict, pd.DataFrame]:
 
 
 def plot_quality(summary: pd.DataFrame, out_path: str):
+    use_polish_number_format()
     plt.rcParams.update({"font.size": 11, "font.family": "serif"})
     fig, ax = plt.subplots(figsize=(8, 5))
     for col, label in [("purity_before_switch", "Czystość przed zmianą tematów"), ("purity_after_switch", "Czystość po zmianie tematów")]:
@@ -132,6 +134,7 @@ def plot_purity_over_time(timeseries: pd.DataFrame, out_path: str):
     lambda values (mean over stream orders): the drop at the topic switch
     and the lack of recovery, whatever the speed of forgetting. Warm-up and
     drift markers follow the thesis 2 figures."""
+    use_polish_number_format()
     plt.rcParams.update({"font.size": 11, "font.family": "serif"})
     fig, ax = plt.subplots(figsize=(8, 4.5))
     ax.axvspan(0, INITIAL_WARMUP_SIZE, color="#b2ebf2", alpha=0.9, zorder=0, label="Rozgrzewka (IPCA i DenStream)")

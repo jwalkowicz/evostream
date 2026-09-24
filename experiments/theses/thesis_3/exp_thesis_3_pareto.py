@@ -23,6 +23,7 @@ from sklearn.decomposition import IncrementalPCA
 from sklearn.metrics import normalized_mutual_info_score
 from sklearn.preprocessing import normalize
 
+from experiments.plot_style import use_polish_number_format
 from experiments.theses.thesis_1.exp_thesis_1_ipca import STREAM_SEEDS, shuffle_stream
 from experiments.theses.thesis_2.exp_thesis_2_drift import (
     HOTSWAP_BUFFER_SIZE,
@@ -153,6 +154,7 @@ def _dimension_axis(ax, ylabel: str):
 
 
 def plot_fronts(fronts: pd.DataFrame, out_path: str):
+    use_polish_number_format()
     phase, seed = EXAMPLE_RUN
     fig, ax = plt.subplots(figsize=(9, 6))
     for d in PCA_DIMS:
@@ -171,6 +173,7 @@ def plot_fronts(fronts: pd.DataFrame, out_path: str):
 
 
 def plot_compromise_quality(summary: pd.DataFrame, out_path: str):
+    use_polish_number_format()
     fig, ax = plt.subplots(figsize=(8, 5))
     for metric, label in [("purity", "Czystość"), ("nmi", "NMI")]:
         ax.errorbar(summary["pca_dim"], summary[f"{metric}_mean"], yerr=summary[f"{metric}_std"], marker="o", capsize=4, lw=2, label=label)
@@ -182,6 +185,7 @@ def plot_compromise_quality(summary: pd.DataFrame, out_path: str):
 
 
 def plot_compromise_structure(summary: pd.DataFrame, out_path: str):
+    use_polish_number_format()
     fig, ax = plt.subplots(figsize=(8, 5))
     ax.errorbar(summary["pca_dim"], summary["micro_macro_ratio_mean"], yerr=summary["micro_macro_ratio_std"], marker="o", capsize=4, lw=2)
     _dimension_axis(ax, "$N_{micro} / N_{macro}$")
@@ -190,6 +194,7 @@ def plot_compromise_structure(summary: pd.DataFrame, out_path: str):
 
 
 def plot_compromise_params(summary: pd.DataFrame, out_path: str):
+    use_polish_number_format()
     bounds = config.evolution.param_bounds
     fig, axes = plt.subplots(2, 1, figsize=(8, 7), sharex=True)
     for ax, param, label in [(axes[0], "epsilon", "$\\varepsilon^*$"), (axes[1], "decaying_factor", "$\\lambda^*$")]:
