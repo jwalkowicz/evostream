@@ -10,120 +10,80 @@ if PROJECT_ROOT not in sys.path:
 
 import numpy as np
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
-import torch
 from sentence_transformers import SentenceTransformer
 from sklearn.datasets import fetch_20newsgroups
 
 from src.core.config import config
+from src.core.logger import logger
 from src.domain.clustering import StreamClusterer
 from src.domain.drift import UnsupervisedDriftDetector
 from src.domain.evolution import NSGAIIOptimizer
 from src.domain.preprocessing import StreamProjector, TextPreprocessor
 
-# Page setup
-st.set_page_config(
-    page_title="evostream",
-    page_icon="",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-st.markdown(
-    """
-<style>
-    .main-header {
-        font-size: 26px;
-        font-weight: 700;
-        color: #1e3d59;
-        margin-bottom: 0px;
-    }
-    .sub-header {
-        font-size: 15px;
-        color: #555;
-        margin-bottom: 20px;
-    }
-    .metric-card {
-        background-color: #f8f9fa;
-        border-radius: 8px;
-        padding: 12px;
-        border-left: 4px solid #3498db;
-    }
-</style>
-""",
-    unsafe_allow_html=True,
-)
+CONCEPTS = {
+    "A": ("Koncept A: nauka i motoryzacja", config.dataset.categories_concept_a),
+    "B": ("Koncept B: sport, IT i polityka", config.dataset.categories_concept_b),
+    "C": ("Koncept C: grafika, religia i kryptografia", config.dataset.categories_concept_c),
+}
+NEXT_CONCEPT = {"A": "B", "B": "C", "C": "A"}
+N_MACRO_CLUSTERS = len(config.dataset.categories_concept_a)
+BATCH_SIZE = config.ml.batch_size
+WINDOW = config.denstream.window_size
+STREAM_DELAY_S = 0.2
+MACRO_COLORS = ["#8e44ad", "#2980b9", "#27ae60", "#d35400", "#c0392b", "#f39c12", "#16a085", "#2c3e50"]
+NOISE_COLOR = "#e74c3c"
 
 
-# Data and encoder
 @st.cache_resource
-def load_encoder_and_data():
-    device = (
-        "mps"
-        if torch.backends.mps.is_available()
-        else ("cuda" if torch.cuda.is_available() else "cpu")
-    )
-    encoder = SentenceTransformer(
-        config.ml.embedding_model if config.ml else "all-MiniLM-L6-v2", device=device
-    )
+def load_encoder_and_streams():
+    """SBERT model and the cleaned, shuffled documents of each concept."""
+    encoder = SentenceTransformer(config.ml.embedding_model, device="cpu")
     preprocessor = TextPreprocessor()
-
-    p1_cats = config.dataset.categories_concept_a
-    p2_cats = config.dataset.categories_concept_b
-    p3_cats = config.dataset.categories_concept_c
-    max_samples = getattr(config.dataset, "max_samples_per_concept", 1000)
-
-    def load_domain(cats, phase_name):
-        raw = fetch_20newsgroups(
-            subset="all", categories=cats, remove=("headers", "footers", "quotes")
-        )
-        pairs = []
-        for text, target_idx in zip(raw.data, raw.target):
+    streams = {}
+    for key, (_, categories) in CONCEPTS.items():
+        raw = fetch_20newsgroups(subset="all", categories=categories, remove=("headers", "footers", "quotes"))
+        docs = []
+        for text, target in zip(raw.data, raw.target):
             cleaned = preprocessor.clean(text)
             if len(cleaned.split()) >= 10:
-                label = raw.target_names[target_idx]
-                pairs.append((cleaned, label, phase_name))
+                docs.append((cleaned, raw.target_names[target]))
         random.seed(config.seed)
-        random.shuffle(pairs)
-        return pairs[:max_samples]
-
-    p1 = load_domain(p1_cats, "Koncept A: Nauka i motoryzacja (sci/rec)")
-    p2 = load_domain(p2_cats, "Koncept B: Sport, IT i polityka (rec/comp/talk)")
-    p3 = load_domain(
-        p3_cats, "Koncept C: Grafika, religia i kryptografia (comp/soc/sci)"
-    )
-
-    return encoder, p1, p2, p3
+        random.shuffle(docs)
+        streams[key] = docs[: config.dataset.max_samples_per_concept]
+    return encoder, streams
 
 
-encoder, data_a, data_b, data_c = load_encoder_and_data()
-N_MACRO_CLUSTERS = len(config.dataset.categories_concept_a)
+encoder, streams = load_encoder_and_streams()
 
 
-def encode_warmup_documents() -> np.ndarray:
-    """SBERT embeddings of the warm-up documents: the first documents of
-    concept A, used to fit IPCA and warm-start DenStream as in the thesis
-    experiments. Streaming then continues right after them."""
-    warmup_texts = [item[0] for item in data_a[: config.ml.ipca_warmup_size]]
-    return encoder.encode(warmup_texts, normalize_embeddings=True, convert_to_numpy=True)
+def fmt(value: float, digits: int) -> str:
+    """Number with a decimal comma, as in the thesis."""
+    return f"{value:.{digits}f}".replace(".", ",")
 
 
-def create_clusterer() -> StreamClusterer:
-    return StreamClusterer(
+def encode(texts: list[str]) -> np.ndarray:
+    return encoder.encode(texts, normalize_embeddings=True, convert_to_numpy=True)
+
+
+def reset_state() -> None:
+    """New model warm-started on the first documents of concept A, as in the experiments."""
+    warmup = encode([text for text, _ in streams["A"][: config.ml.ipca_warmup_size]])
+    state = st.session_state
+    state.projector = StreamProjector(n_components=config.ml.pca_components_num)
+    state.projector.fit(warmup)
+    state.clusterer = StreamClusterer(
         epsilon=config.denstream.epsilon,
         mu=config.denstream.mu,
         beta=config.denstream.beta,
         decaying_factor=config.denstream.decaying_factor,
         n_samples_init=config.denstream.n_samples_init,
-        window_size=config.denstream.window_size,
+        window_size=WINDOW,
         expected_macro_clusters=N_MACRO_CLUSTERS,
     )
-
-
-def create_detector() -> UnsupervisedDriftDetector:
-    return UnsupervisedDriftDetector(
+    state.clusterer.warm_start(state.projector.transform(warmup))
+    state.detector = UnsupervisedDriftDetector(
         window_size=config.drift.window_size,
         min_warmup_steps=config.drift.min_warmup_steps,
         quality_drop_sigma=config.drift.quality_drop_sigma,
@@ -133,10 +93,7 @@ def create_detector() -> UnsupervisedDriftDetector:
         quality_absolute_floor=config.drift.quality_absolute_floor,
         centroid_shift_min_warmup_steps=config.drift.centroid_shift_min_warmup_steps,
     )
-
-
-def create_optimizer() -> NSGAIIOptimizer:
-    return NSGAIIOptimizer(
+    state.optimizer = NSGAIIOptimizer(
         n_macro_clusters=N_MACRO_CLUSTERS,
         population_size=config.evolution.population_size,
         generations=config.evolution.generations,
@@ -150,653 +107,281 @@ def create_optimizer() -> NSGAIIOptimizer:
         min_eval_buffer=config.evolution.min_eval_buffer,
         seed=config.evolution.seed,
     )
-
-
-def reset_session_state():
-    warmup = encode_warmup_documents()
-    st.session_state.projector = StreamProjector(n_components=config.ml.pca_components_num)
-    st.session_state.projector.fit(warmup)
-    st.session_state.clusterer = create_clusterer()
-    st.session_state.clusterer.warm_start(st.session_state.projector.transform(warmup))
-    st.session_state.drift_detector = create_detector()
-    st.session_state.optimizer = create_optimizer()
-
-    st.session_state.current_concept = "A"
-    st.session_state.is_streaming = False
-    st.session_state.stream_idx_a = config.ml.ipca_warmup_size
-    st.session_state.stream_idx_b = 0
-    st.session_state.stream_idx_c = 0
-    st.session_state.total_docs_processed = 0
-
-    st.session_state.history_records = []
-    st.session_state.recent_2d_points = []
-    st.session_state.recent_labels = []
-    st.session_state.recent_texts = []
-    st.session_state.recent_macro_preds = []
-    st.session_state.recent_vectors_buffer = []
-    st.session_state.recent_raw_buffer = []
-    st.session_state.collecting_for_swap = False
-    st.session_state.swap_buffer = []
-    st.session_state.latest_pareto_front = []
-    st.session_state.latest_compromise = None
-    st.session_state.drift_events = []
-    st.session_state.detection_events = []
+    state.concept = "A"
+    state.stream_pos = {"A": config.ml.ipca_warmup_size, "B": 0, "C": 0}
+    state.streaming = False
+    state.docs_processed = 0
+    state.history = []
+    state.recent_raw = []
+    state.recent_docs = []
+    state.collecting_for_swap = False
+    state.swap_buffer = []
+    state.injected_drifts = []
+    state.detected_drifts = []
 
 
 def swap_model(raw_buffer: np.ndarray):
-    """Model swap as in the thesis 2 experiment: re-fits IPCA on the raw
-    embeddings of the buffer, runs NSGA-II on the projected buffer and swaps
-    in the compromise-solution model trained on it."""
-    st.session_state.projector.fit(raw_buffer)
-    projected = st.session_state.projector.transform(raw_buffer)
-    st.session_state.recent_vectors_buffer = list(projected[-config.denstream.window_size :])
-    st.session_state.recent_2d_points = list(projected[-config.denstream.window_size :, :2])
-
-    compromise, front, _ = st.session_state.optimizer.evolve(
-        data_buffer=projected,
-        current_params={
-            "epsilon": float(st.session_state.clusterer.model.epsilon),
-            "decaying_factor": float(st.session_state.clusterer.model.decaying_factor),
-            "mu": int(st.session_state.clusterer.model.mu),
-        },
-    )
-    st.session_state.latest_pareto_front = front
-    st.session_state.latest_compromise = compromise
-    st.session_state.clusterer.hot_swap_model(compromise.params, projected)
-    print(
-        f"NSGA-II done | front size={len(front)} | "
-        f"Compromise: ε={compromise.params['epsilon']:.4f} "
-        f"λ={compromise.params['decaying_factor']:.4f} "
-        f"Quality={compromise.quality_score:.4f} Complexity={compromise.complexity_score:.4f}"
+    """Model swap as in the thesis 2 experiment: IPCA refitted on the buffer,
+    NSGA-II on the projected buffer, new DenStream trained on it."""
+    state = st.session_state
+    state.projector.fit(raw_buffer)
+    projected = state.projector.transform(raw_buffer)
+    compromise, front, _ = state.optimizer.evolve(data_buffer=projected)
+    state.clusterer.hot_swap_model(compromise.params, projected)
+    logger.info(
+        f"Model swapped: front size {len(front)}, eps={compromise.params['epsilon']:.4f}, "
+        f"lambda={compromise.params['decaying_factor']:.4f}"
     )
     return compromise
 
 
-# Session state
-if "clusterer" not in st.session_state:
-    reset_session_state()
+def next_batch() -> list[tuple[str, str]]:
+    """Next documents of the active concept; the stream wraps around at the end."""
+    state = st.session_state
+    docs = streams[state.concept]
+    start = state.stream_pos[state.concept]
+    batch = [docs[(start + i) % len(docs)] for i in range(BATCH_SIZE)]
+    state.stream_pos[state.concept] = (start + BATCH_SIZE) % len(docs)
+    return batch
 
 
-TOPICS_A = config.dataset.categories_concept_a
-TOPICS_B = config.dataset.categories_concept_b
-TOPICS_C = config.dataset.categories_concept_c
-
-
-# Sidebar
-
-if st.session_state.current_concept == "A":
-    active_concept_str = "Koncept A: Nauka i motoryzacja (sci/rec)"
-    active_topics_list = TOPICS_A
-elif st.session_state.current_concept == "B":
-    active_concept_str = "Koncept B: Sport, IT i polityka (rec/comp/talk)"
-    active_topics_list = TOPICS_B
-else:
-    active_concept_str = "Koncept C: Grafika, religia i kryptografia (comp/soc/sci)"
-    active_topics_list = TOPICS_C
-
-st.sidebar.markdown(f"**Aktywna domena strumienia:**\n`{active_concept_str}`")
-st.sidebar.markdown(
-    "**Bieżące kategorie w strumieniu:**\n"
-    + "".join([f"- `{t}`\n" for t in active_topics_list])
-)
-
-st.sidebar.markdown("---")
-st.sidebar.markdown("### Przepływ i tempo strumienia")
-
-# The detector's windows are counted in batches, so the batch size matches
-# the thesis experiments.
-batch_size = config.ml.batch_size
-stream_delay = 0.2
-
-if st.session_state.get("is_streaming", False):
-    if st.sidebar.button("Zatrzymaj strumień", type="primary", width="stretch"):
-        st.session_state.is_streaming = False
-        st.rerun()
-else:
-    if st.sidebar.button("Uruchom ciągły strumień", type="primary", width="stretch"):
-        st.session_state.is_streaming = True
-        st.rerun()
-
-st.sidebar.markdown("---")
-st.sidebar.markdown("### Wstrzykiwanie dryfu pojęć")
-abrupt_drift_clicked = st.sidebar.button("Wymuś nagły dryf", width="stretch")
-
-
-disable_adaptation = st.sidebar.checkbox(
-    "Zablokuj adaptację (tylko detekcja)",
-    value=False,
-    help="Algorytm wykryje dryf, ale nie uruchomi ewolucji (świetne do pokazywania na prezentacji jak model degraduje bez pomocy NSGA-II).",
-)
-manual_ga_clicked = st.sidebar.button("Uruchom optymalizację NSGA-II", width="stretch")
-reset_clicked = st.sidebar.button("Zresetuj stan strumienia", width="stretch")
-
-st.sidebar.markdown("---")
-st.sidebar.markdown("### Stan adaptacji")
-_warmup = config.drift.centroid_shift_min_warmup_steps
-_steps = st.session_state.drift_detector.total_steps_seen
-if _steps < _warmup:
-    st.sidebar.caption(f"Rozgrzewka sygnału przesunięcia centroidów: {_steps}/{_warmup} partii")
-else:
-    st.sidebar.caption("Detektor dryfu aktywny (oba sygnały)")
-if st.session_state.collecting_for_swap:
-    _collected = len(st.session_state.swap_buffer)
-    _needed = config.evolution.hotswap_buffer_size
-    st.sidebar.progress(
-        min(1.0, _collected / _needed),
-        text=f"Zbieranie dokumentów po dryfie: {_collected}/{_needed}",
-    )
-
-
-# Sidebar actions
-if reset_clicked:
-    reset_session_state()
-    st.rerun()
-
-if abrupt_drift_clicked:
-    next_concept_map = {"A": "B", "B": "C", "C": "A"}
-    st.session_state.current_concept = next_concept_map.get(
-        st.session_state.current_concept, "B"
-    )
-    st.session_state.drift_events.append(st.session_state.total_docs_processed)
-    st.sidebar.success(
-        f"Wstrzyknięto nagły dryf pojęć. Przełączono na: Koncept {st.session_state.current_concept}"
-    )
-
-if manual_ga_clicked:
-    # Demo shortcut: swap right away on the recent window, without waiting for an alarm.
-    if len(st.session_state.recent_raw_buffer) >= config.evolution.min_eval_buffer:
-        with st.spinner("Optymalizacja wielokryterialna NSGA-II..."):
-            compromise = swap_model(np.array(st.session_state.recent_raw_buffer))
-        st.sidebar.success(
-            f"Wymieniono model: ε={compromise.params['epsilon']:.3f}, λ={compromise.params['decaying_factor']:.3f}"
-        )
-    else:
-        st.sidebar.warning(
-            f"Niewystarczająca liczba dokumentów w buforze (wymagane min. {config.evolution.min_eval_buffer})."
-        )
-
-
-def _slice_circular(data_list, start_idx, size):
-    n = len(data_list)
-    if n == 0:
-        return [], 0
-    if start_idx + size <= n:
-        items = data_list[start_idx : start_idx + size]
-    else:
-        items = data_list[start_idx:] + data_list[: (start_idx + size) % n]
-    new_idx = (start_idx + size) % n
-    return items, new_idx
-
-
-def ingest_batch(current_b_size):
-    if st.session_state.current_concept == "A":
-        batch_items, st.session_state.stream_idx_a = _slice_circular(
-            data_a, st.session_state.stream_idx_a, current_b_size
-        )
-    elif st.session_state.current_concept == "B":
-        batch_items, st.session_state.stream_idx_b = _slice_circular(
-            data_b, st.session_state.stream_idx_b, current_b_size
-        )
-    else:
-        batch_items, st.session_state.stream_idx_c = _slice_circular(
-            data_c, st.session_state.stream_idx_c, current_b_size
-        )
-
-    batch_texts = [item[0] for item in batch_items]
-    batch_labels = [item[1] for item in batch_items]
-
-    device = (
-        "mps"
-        if torch.backends.mps.is_available()
-        else ("cuda" if torch.cuda.is_available() else "cpu")
-    )
-    sbert_vecs = encoder.encode(
-        batch_texts,
-        batch_size=len(batch_texts),
-        device=device,
-        normalize_embeddings=True,
-        convert_to_numpy=True,
-    )
-
-    reduced_vecs = st.session_state.projector.transform(sbert_vecs)
-
-    batch_macro_preds = st.session_state.clusterer.update(
-        reduced_vecs, labels=batch_labels
-    )
-    metrics = st.session_state.clusterer.get_metrics()
-    st.session_state.total_docs_processed += len(batch_texts)
-
-    # Recent window, used by the plots, the sample documents and the manual NSGA-II button.
-    w_size = config.denstream.window_size
-    st.session_state.recent_vectors_buffer = (st.session_state.recent_vectors_buffer + list(reduced_vecs))[-w_size:]
-    st.session_state.recent_raw_buffer = (st.session_state.recent_raw_buffer + list(sbert_vecs))[-w_size:]
-    st.session_state.recent_2d_points = (st.session_state.recent_2d_points + list(reduced_vecs[:, :2]))[-w_size:]
-    st.session_state.recent_labels = (st.session_state.recent_labels + batch_labels)[-w_size:]
-    st.session_state.recent_texts = (st.session_state.recent_texts + batch_texts)[-w_size:]
-    st.session_state.recent_macro_preds = (st.session_state.recent_macro_preds + batch_macro_preds)[-w_size:]
-
-    sil = metrics.get("silhouette") or 0.0
-    shift = metrics.get("centroid_shift")
-    pur = (metrics.get("purity") or 0.0) * 100
-    print(
-        f"[BATCH #{st.session_state.total_docs_processed:>5}] "
-        f"Concept {st.session_state.current_concept} | "
-        f"micro={metrics['n_micro_clusters']} macro={metrics['n_macro_clusters']} | "
-        f"Purity={pur:.1f}% Sil={sil:.4f} Shift={shift if shift is None else round(shift, 3)} | "
-        f"ε={st.session_state.clusterer.model.epsilon:.3f} "
-        f"λ={st.session_state.clusterer.model.decaying_factor:.4f}"
-    )
+def process_batch(adaptation_enabled: bool) -> None:
+    state = st.session_state
+    batch = next_batch()
+    texts, labels = [text for text, _ in batch], [label for _, label in batch]
+    raw = encode(texts)
+    predictions = state.clusterer.update(state.projector.transform(raw), labels=labels)
+    state.docs_processed += len(batch)
+    state.recent_raw = (state.recent_raw + list(raw))[-WINDOW:]
+    state.recent_docs = (state.recent_docs + list(zip(texts, labels, predictions)))[-WINDOW:]
 
     # As in the thesis 2 experiment: an alarm starts collecting a buffer, and
     # once it is full IPCA is refitted, NSGA-II runs and the model is swapped.
-    is_drift = st.session_state.drift_detector.update(
-        current_silhouette=sil, centroid_shift=shift
-    )
-    if is_drift:
-        st.session_state.detection_events.append(st.session_state.total_docs_processed)
-        print(f"Drift detected at document {st.session_state.total_docs_processed}")
-        if disable_adaptation:
-            st.toast("🚨 Wykryto dryf (adaptacja zablokowana)", icon="🛑")
-        elif not st.session_state.collecting_for_swap:
-            st.toast(
-                f"🚨 Wykryto dryf! Zbieranie {config.evolution.hotswap_buffer_size} nowych dokumentów przed optymalizacją NSGA-II...",
-                icon="🚨",
-            )
-            st.session_state.collecting_for_swap = True
-            st.session_state.swap_buffer = []
+    metrics = state.clusterer.get_metrics()
+    if state.detector.update(current_silhouette=metrics["silhouette"] or 0.0, centroid_shift=metrics["centroid_shift"]):
+        state.detected_drifts.append(state.docs_processed)
+        if not adaptation_enabled:
+            st.toast("Wykryto dryf (adaptacja wyłączona)")
+        elif not state.collecting_for_swap:
+            st.toast(f"Wykryto dryf – zbieranie {config.evolution.hotswap_buffer_size} dokumentów do wymiany modelu")
+            state.collecting_for_swap = True
+            state.swap_buffer = []
 
-    if st.session_state.collecting_for_swap:
-        st.session_state.swap_buffer.extend(sbert_vecs)
-        if len(st.session_state.swap_buffer) >= config.evolution.hotswap_buffer_size:
-            with st.spinner("⚙️ Optymalizacja NSGA-II w toku..."):
-                swap_model(np.array(st.session_state.swap_buffer))
-            st.session_state.collecting_for_swap = False
-            st.session_state.swap_buffer = []
-            st.toast("✅ Wdrożono nowy model (IPCA + DenStream)")
-            metrics = st.session_state.clusterer.get_metrics()
+    if state.collecting_for_swap:
+        state.swap_buffer.extend(raw)
+        if len(state.swap_buffer) >= config.evolution.hotswap_buffer_size:
+            with st.spinner("Optymalizacja NSGA-II..."):
+                swap_model(np.array(state.swap_buffer))
+            state.collecting_for_swap = False
+            state.swap_buffer = []
+            st.toast("Wdrożono nowy model")
     else:
-        st.session_state.clusterer.ease_decaying_factor(config.denstream.decaying_factor)
+        state.clusterer.ease_decaying_factor(config.denstream.decaying_factor)
 
-    st.session_state.history_records.append(
+    state.history.append(
         {
-            "docs": st.session_state.total_docs_processed,
+            "docs": state.docs_processed,
             "purity": metrics["purity"],
             "silhouette": metrics["silhouette"],
+            "silhouette_threshold": state.detector.current_threshold,
             "centroid_shift": metrics["centroid_shift"],
-            "n_micro": metrics["n_micro_clusters"],
-            "n_macro": metrics["n_macro_clusters"],
-            "sil_threshold": st.session_state.drift_detector.current_threshold,
+            "epsilon": state.clusterer.model.epsilon,
+            "decay": state.clusterer.model.decaying_factor,
             "latency_ms": metrics["latency_ms_per_doc"],
-            "eps": st.session_state.clusterer.model.epsilon,
-            "decay": st.session_state.clusterer.model.decaying_factor,
         }
     )
 
 
-if st.session_state.get("is_streaming", False):
-    ingest_batch(batch_size)
+def render_sidebar() -> bool:
+    """Controls; returns whether adaptation is enabled."""
+    state = st.session_state
+    sidebar = st.sidebar
+    name, categories = CONCEPTS[state.concept]
+    sidebar.markdown(f"**Aktywny koncept:** {name}")
+    sidebar.markdown("\n".join(f"- `{c}`" for c in categories))
+    sidebar.divider()
 
+    if state.streaming:
+        if sidebar.button("Zatrzymaj strumień", type="primary", width="stretch"):
+            state.streaming = False
+            st.rerun()
+    elif sidebar.button("Uruchom strumień", type="primary", width="stretch"):
+        state.streaming = True
+        st.rerun()
 
-# Summary cards
+    if sidebar.button("Wymuś nagły dryf", width="stretch"):
+        state.concept = NEXT_CONCEPT[state.concept]
+        state.injected_drifts.append(state.docs_processed)
+        sidebar.success(f"Przełączono na: {CONCEPTS[state.concept][0]}")
 
-curr_m = st.session_state.clusterer.get_metrics()
-c1, c2, c3, c4, c5, c6 = st.columns(6)
-c1.metric("Przetworzono", f"{st.session_state.total_docs_processed} dok.")
-c2.metric("Mikroklastry", curr_m["n_micro_clusters"])
-c3.metric("Makroklastry", curr_m["n_macro_clusters"])
-purity_val = f"{curr_m['purity'] * 100:.1f}%" if curr_m["purity"] is not None else "--"
-c4.metric("Czystość (Purity)", purity_val)
-sil_val = f"{curr_m['silhouette']:.3f}" if curr_m["silhouette"] is not None else "--"
-c5.metric("Sylwetka (iCVI)", sil_val)
-c6.metric("Opóźnienie", f"{curr_m['latency_ms_per_doc']:.2f} ms/dok.")
-
-with st.container():
-    if st.session_state.current_concept == "A":
-        active_concept_str = "Koncept A: Nauka i motoryzacja"
-        active_topics_list = TOPICS_A
-    elif st.session_state.current_concept == "B":
-        active_concept_str = "Koncept B: Sport, IT i polityka"
-        active_topics_list = TOPICS_B
-    else:
-        active_concept_str = "Koncept C: Grafika, religia i kryptografia"
-        active_topics_list = TOPICS_C
-
-    st.markdown(
-        f"""
-        <div style="background-color: #f0f7fb; border-left: 5px solid #2980b9; padding: 12px 16px; border-radius: 6px; margin: 10px 0 20px 0;">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-                <div>
-                    <span style="font-weight: bold; color: #2c3e50; font-size: 15px;">Aktywna domena strumienia:</span>
-                    <span style="background-color: #2980b9; color: white; padding: 3px 8px; border-radius: 4px; font-weight: bold; margin-left: 8px;">{active_concept_str}</span>
-                </div>
-            </div>
-            <div style="margin-top: 6px; font-size: 13px; color: #34495e;">
-                <b>Kategorie 20 Newsgroups w strumieniu:</b> {" &nbsp;•&nbsp; ".join([f"<code>{t}</code>" for t in active_topics_list])}
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    adaptation_enabled = not sidebar.checkbox(
+        "Wyłącz adaptację (tylko detekcja)",
+        help="Detektor nadal zgłasza dryf, ale model nie jest wymieniany.",
     )
 
-st.divider()
+    if sidebar.button("Uruchom NSGA-II teraz", width="stretch"):
+        if len(state.recent_raw) >= config.evolution.min_eval_buffer:
+            with st.spinner("Optymalizacja NSGA-II..."):
+                compromise = swap_model(np.array(state.recent_raw))
+            sidebar.success(
+                f"Nowy model: ε = {fmt(compromise.params['epsilon'], 3)}, λ = {fmt(compromise.params['decaying_factor'], 3)}"
+            )
+        else:
+            sidebar.warning(f"Za mało dokumentów (potrzeba co najmniej {config.evolution.min_eval_buffer}).")
 
+    if sidebar.button("Resetuj", width="stretch"):
+        reset_state()
+        st.rerun()
 
-# Views
-selected_view = st.radio(
-    "Wybierz widok panelu głównego:",
-    [
-        "Przestrzeń semantyczna i makroklastry (2D)",
-        "Telemetria i detekcja dryfu",
-    ],
-    horizontal=True,
-    label_visibility="collapsed",
-)
-
-if selected_view == "Przestrzeń semantyczna i makroklastry (2D)":
-    st.subheader("Przestrzeń semantyczna i makroklastry (2D)")
-
-    if len(st.session_state.recent_2d_points) > 0:
-
-        fig_scatter = go.Figure()
-
-        structs = st.session_state.clusterer.get_cluster_structures()
-        micro_list = []
-        for k, v in structs.get("p_micro_clusters", {}).items():
-            micro_list.append({
-                "type": "p-micro",
-                "center": v["center"][:2],
-                "key": k,
-                "macro_id": v.get("macro_id", -1),
-                "weight": v["weight"],
-            })
-        for k, v in structs.get("o_micro_clusters", {}).items():
-            micro_list.append({
-                "type": "o-micro",
-                "center": v["center"][:2],
-                "key": k,
-                "macro_id": -1,
-                "weight": v["weight"],
-            })
-
-        macro_clusters = {}
-        for m in micro_list:
-            if m["type"] == "p-micro" and m["macro_id"] != -1:
-                mid = m["macro_id"]
-                if mid not in macro_clusters:
-                    macro_clusters[mid] = []
-                macro_clusters[mid].append(m["center"])
-
-        macro_colors = ["#8e44ad", "#2980b9", "#27ae60", "#d35400", "#c0392b", "#f39c12", "#16a085", "#2c3e50"]
-
-        # Lines from each macro-cluster centre to its micro-clusters
-        for mid, centers in macro_clusters.items():
-            m_color = macro_colors[mid % len(macro_colors)]
-            mean_center = __import__("numpy").mean(centers, axis=0).tolist()
-
-            for c in centers:
-                fig_scatter.add_trace(go.Scatter(
-                    x=[mean_center[0], c[0]],
-                    y=[mean_center[1], c[1]],
-                    mode="lines",
-                    line=dict(color=m_color, width=2, dash="dot"),
-                    opacity=0.6,
-                    showlegend=False,
-                    hoverinfo="none"
-                ))
-
-            fig_scatter.add_trace(go.Scatter(
-                x=[mean_center[0]],
-                y=[mean_center[1]],
-                mode="text",
-                text=[f"<b>Makro #{mid}</b>"],
-                textposition="top center",
-                textfont=dict(color=m_color, size=14),
-                showlegend=False,
-                hoverinfo="none"
-            ))
-
-        for mid, centers in macro_clusters.items():
-            m_color = macro_colors[mid % len(macro_colors)]
-            keys = [m["key"] for m in micro_list if m["type"] == "p-micro" and m["macro_id"] == mid]
-            weights = [m["weight"] for m in micro_list if m["type"] == "p-micro" and m["macro_id"] == mid]
-
-            fig_scatter.add_trace(go.Scatter(
-                x=[c[0] for c in centers],
-                y=[c[1] for c in centers],
-                mode="markers+text",
-                text=[f"mc{k}" for k in keys],
-                textposition="bottom right",
-                marker=dict(
-                    size=[min(30, max(10, w * 1.5)) for w in weights],
-                    color=m_color,
-                    line=dict(width=2, color="#ffffff"),
-                ),
-                name=f"Makro #{mid}",
-                hovertext=[f"Mikroklaster {k} (Waga: {w:.1f})" for k, w in zip(keys, weights)],
-                hoverinfo="text"
-            ))
-
-        o_micros = [m for m in micro_list if m["type"] == "o-micro"]
-        if o_micros:
-            fig_scatter.add_trace(go.Scatter(
-                x=[m["center"][0] for m in o_micros],
-                y=[m["center"][1] for m in o_micros],
-                mode="markers",
-                marker=dict(size=8, color="#e74c3c", symbol="x", line=dict(width=2, color="#e74c3c")),
-                name="Szum (O-Micro)",
-                hovertext=[f"Szum MC_{m['key']}" for m in o_micros],
-                hoverinfo="text"
-            ))
-
-        fig_scatter.update_layout(
-            title="Architektura klastrów online (Mikroklastry & Makroklastry)",
-            height=580,
-            xaxis_title="IPCA Składowa 1",
-            yaxis_title="IPCA Składowa 2",
-            showlegend=True,
-            plot_bgcolor="whitesmoke"
-        )
-
-        st.plotly_chart(fig_scatter, width="stretch")
-
-        st.markdown("### 📝 Przykładowe dokumenty z ostatniej partii strumienia")
-        if len(st.session_state.recent_texts) > 0:
-            sample_texts = st.session_state.recent_texts[-3:]
-            sample_labels = st.session_state.recent_labels[-3:]
-            sample_macros = st.session_state.recent_macro_preds[-3:]
-
-            cols = st.columns(3)
-            for i, (txt, lbl, mac) in enumerate(zip(sample_texts, sample_labels, sample_macros)):
-                with cols[i]:
-                    mac_str = f"Makro {mac}" if mac != -1 else "Szum"
-                    color = macro_colors[mac % len(macro_colors)] if mac != -1 else "#e74c3c"
-                    st.markdown(f'''
-                    <div style="border-top: 4px solid {color}; padding: 10px; background-color: #f8f9fa; border-radius: 5px; height: 100%;">
-                        <div style="font-size: 11px; color: #7f8c8d; margin-bottom: 5px;">Kategoria: <b>{lbl}</b> | Przypisanie: <b>{mac_str}</b></div>
-                        <div style="font-size: 13px; color: #2c3e50; font-style: italic;">"{txt[:180]}..."</div>
-                    </div>
-                    ''', unsafe_allow_html=True)
-
-
+    sidebar.divider()
+    warmup_steps = config.drift.centroid_shift_min_warmup_steps
+    steps = state.detector.total_steps_seen
+    if steps < warmup_steps:
+        sidebar.caption(f"Rozgrzewka sygnału przesunięcia centroidów: {steps}/{warmup_steps} partii")
     else:
-        st.info(
-            "Brak punktów w buforze przestrzeni dwuwymiarowej. Kliknij przycisk 'Uruchom ciągły strumień', aby rozpocząć przetwarzanie danych."
-        )
+        sidebar.caption("Detektor dryfu aktywny (oba sygnały)")
+    if state.collecting_for_swap:
+        needed = config.evolution.hotswap_buffer_size
+        collected = len(state.swap_buffer)
+        sidebar.progress(min(1.0, collected / needed), text=f"Bufor wymiany modelu: {collected}/{needed}")
+    return adaptation_enabled
 
-elif selected_view == "Telemetria i detekcja dryfu":
-    st.subheader("Wskaźniki telemetryczne i sygnały detekcji dryfu pojęć")
-    if len(st.session_state.history_records) > 0:
-        df_hist = pd.DataFrame(st.session_state.history_records)
 
-        fig_pur = go.Figure()
-        fig_pur.add_trace(
-            go.Scatter(
-                x=df_hist["docs"],
-                y=df_hist["purity"],
-                mode="lines",
-                name="Czystość klastrów (Purity)",
-                line=dict(color="#2ecc71", width=2),
-            )
-        )
-        for d in st.session_state.drift_events:
-            fig_pur.add_vline(
-                x=d,
-                line_dash="dash",
-                line_color="red",
-                annotation_text="Dryf pojęć",
-                annotation_position="top right",
-            )
-        fig_pur.update_layout(
-            title="Czystość klastrów (Purity) w czasie",
-            xaxis_title="Liczba przetworzonych dokumentów",
-            yaxis_title="Purity",
-            height=250,
-        )
-        st.plotly_chart(fig_pur, width="stretch")
+def render_metrics() -> None:
+    state = st.session_state
+    metrics = state.clusterer.get_metrics()
+    purity, silhouette = metrics["purity"], metrics["silhouette"]
+    cols = st.columns(6)
+    cols[0].metric("Przetworzone dokumenty", state.docs_processed)
+    cols[1].metric("Mikroklastry", metrics["n_micro_clusters"])
+    cols[2].metric("Makroklastry", metrics["n_macro_clusters"])
+    cols[3].metric("Czystość", "–" if pd.isna(purity) else fmt(purity, 3))
+    cols[4].metric("Wskaźnik sylwetki", "–" if pd.isna(silhouette) else fmt(silhouette, 3))
+    cols[5].metric("Czas [ms/dok.]", fmt(metrics["latency_ms_per_doc"], 2))
 
-        fig_sil = go.Figure()
-        fig_sil.add_trace(
-            go.Scatter(
-                x=df_hist["docs"],
-                y=df_hist["silhouette"],
-                mode="lines",
-                name="Wskaźnik sylwetki (iCVI)",
-                line=dict(color="#3498db", width=2),
-            )
-        )
-        if (
-            "sil_threshold" in df_hist.columns
-            and not df_hist["sil_threshold"].isnull().all()
-        ):
-            fig_sil.add_trace(
+
+def render_cluster_view() -> None:
+    """Micro-cluster centres on the first two IPCA components, coloured by macro-cluster."""
+    state = st.session_state
+    structures = state.clusterer.get_cluster_structures()
+    by_macro: dict[int, list[tuple]] = {}
+    for key, mc in structures["p_micro_clusters"].items():
+        by_macro.setdefault(mc["macro_id"], []).append((key, mc["center"][:2], mc["weight"]))
+
+    fig = go.Figure()
+    for macro_id, members in sorted(by_macro.items()):
+        color = MACRO_COLORS[macro_id % len(MACRO_COLORS)]
+        centres = np.array([centre for _, centre, _ in members])
+        mean = centres.mean(axis=0)
+        for x, y in centres:
+            fig.add_trace(
                 go.Scatter(
-                    x=df_hist["docs"],
-                    y=df_hist["sil_threshold"],
+                    x=[mean[0], x],
+                    y=[mean[1], y],
                     mode="lines",
-                    name="Próg alarmowy (Dynamiczny)",
-                    line=dict(color="#e74c3c", width=1.5, dash="dash"),
+                    line=dict(color=color, width=1, dash="dot"),
+                    showlegend=False,
+                    hoverinfo="skip",
                 )
             )
-        for d in st.session_state.drift_events:
-            fig_sil.add_vline(
-                x=d,
-                line_dash="dash",
-                line_color="red",
-                annotation_text="Dryf pojęć",
-                annotation_position="top right",
-            )
-        fig_sil.update_layout(
-            title="Wskaźnik sylwetki (iCVI) w czasie",
-            xaxis_title="Liczba przetworzonych dokumentów",
-            yaxis_title="iCVI",
-            height=250,
-            yaxis=dict(range=[-0.1, 0.2]),
-        )
-        st.plotly_chart(fig_sil, width="stretch")
-
-        fig_shift = go.Figure()
-        fig_shift.add_trace(
+        fig.add_trace(
             go.Scatter(
-                x=df_hist["docs"],
-                y=df_hist["centroid_shift"],
-                mode="lines",
-                name="Przesunięcie centroidów makroklastrów",
-                line=dict(color="#e67e22", width=2),
+                x=centres[:, 0],
+                y=centres[:, 1],
+                mode="markers",
+                name=f"Makroklaster {macro_id}",
+                marker=dict(
+                    size=[min(30, max(10, w * 1.5)) for _, _, w in members],
+                    color=color,
+                    line=dict(width=1, color="white"),
+                ),
+                hovertext=[f"Mikroklaster {key}, waga {w:.1f}" for key, _, w in members],
+                hoverinfo="text",
             )
         )
-        fig_shift.add_hline(
-            y=config.drift.centroid_shift_threshold,
-            line_dash="dash",
-            line_color="#333333",
-            annotation_text=f"Próg alarmowy ({config.drift.centroid_shift_threshold})",
-        )
-        for d in st.session_state.drift_events:
-            fig_shift.add_vline(x=d, line_dash="dash", line_color="red")
-        for d in st.session_state.detection_events:
-            fig_shift.add_vline(x=d, line_dash="dot", line_color="#8e44ad")
-        fig_shift.update_layout(
-            title="Przesunięcie centroidów makroklastrów (sygnał dryfu)",
-            xaxis_title="Liczba przetworzonych dokumentów",
-            yaxis_title="Średnie przesunięcie",
-            height=300,
-        )
-        st.plotly_chart(fig_shift, width="stretch")
-        st.caption(
-            f"Czerwone linie – wstrzyknięty dryf, fioletowe – wykrycie dryfu. Sygnał jest aktywny po "
-            f"{config.drift.centroid_shift_min_warmup_steps} partiach "
-            f"({config.drift.centroid_shift_min_warmup_steps * batch_size} dokumentach) od startu."
-        )
-
-        fig_params = go.Figure()
-        fig_params.add_trace(
+    outliers = list(structures["o_micro_clusters"].values())
+    if outliers:
+        fig.add_trace(
             go.Scatter(
-                x=df_hist["docs"],
-                y=df_hist["eps"],
-                mode="lines",
-                name="Promień ε",
-                line=dict(color="#3498db", width=2),
+                x=[mc["center"][0] for mc in outliers],
+                y=[mc["center"][1] for mc in outliers],
+                mode="markers",
+                name="o-mikroklastry",
+                marker=dict(size=8, color=NOISE_COLOR, symbol="x"),
             )
         )
-        fig_params.add_trace(
-            go.Scatter(
-                x=df_hist["docs"],
-                y=df_hist["decay"],
-                mode="lines",
-                name="Czynnik wygaszania λ",
-                line=dict(color="#9b59b6", width=2),
-            )
-        )
-        fig_params.update_layout(
-            title="Trajektoria samostrojenia parametrów",
-            xaxis_title="Liczba przetworzonych dokumentów",
-            yaxis_title="Wartość parametru",
-            height=300,
-        )
-        st.plotly_chart(fig_params, width="stretch")
+    fig.update_layout(separators=", ", height=560, xaxis_title="Składowa IPCA 1", yaxis_title="Składowa IPCA 2")
+    st.plotly_chart(fig, width="stretch")
 
-        fig_lat = px.line(
-            df_hist,
-            x="docs",
-            y="latency_ms",
-            title="Opóźnienie przetwarzania strumieniowego na dokument [ms]",
-        )
-        fig_lat.update_layout(
-            xaxis_title="Liczba przetworzonych dokumentów",
-            yaxis_title="Opóźnienie [ms]",
-            height=300,
-        )
-        st.plotly_chart(fig_lat, width="stretch")
+    if state.recent_docs:
+        st.markdown("#### Ostatnie dokumenty")
+        for col, (text, label, macro_id) in zip(st.columns(3), state.recent_docs[-3:]):
+            assigned = "szum" if macro_id == -1 else f"makroklaster {macro_id}"
+            col.caption(f"Kategoria: {label} | przypisanie: {assigned}")
+            col.write(text[:180] + "…")
+
+
+def line_chart(df: pd.DataFrame, series: dict[str, str], title: str, threshold: float | None = None) -> go.Figure:
+    fig = go.Figure()
+    for column, name in series.items():
+        fig.add_trace(go.Scatter(x=df["docs"], y=df[column], mode="lines", name=name))
+    if threshold is not None:
+        fig.add_hline(y=threshold, line_dash="dash", line_color="#333333")
+    for docs in st.session_state.injected_drifts:
+        fig.add_vline(x=docs, line_dash="dash", line_color="red")
+    for docs in st.session_state.detected_drifts:
+        fig.add_vline(x=docs, line_dash="dot", line_color="#8e44ad")
+    fig.update_layout(separators=", ", title=title, height=280, xaxis_title="Przetworzone dokumenty", margin=dict(t=40))
+    return fig
+
+
+def render_telemetry_view() -> None:
+    df = pd.DataFrame(st.session_state.history)
+    st.caption(
+        "Czerwone linie – wymuszony dryf, fioletowe – dryf wykryty przez detektor. Po wymianie modelu "
+        f"przesunięcie centroidów jest liczone od nowa, więc przez {st.session_state.clusterer.centroid_shift_lookback_batches} partii nie ma wartości."
+    )
+    st.plotly_chart(line_chart(df, {"purity": "Czystość"}, "Czystość"), width="stretch")
+    st.plotly_chart(
+        line_chart(
+            df, {"silhouette": "Wskaźnik sylwetki", "silhouette_threshold": "Próg względny"}, "Wskaźnik sylwetki"
+        ),
+        width="stretch",
+    )
+    st.plotly_chart(
+        line_chart(
+            df,
+            {"centroid_shift": "Przesunięcie centroidów"},
+            "Przesunięcie centroidów makroklastrów",
+            threshold=config.drift.centroid_shift_threshold,
+        ),
+        width="stretch",
+    )
+    st.plotly_chart(line_chart(df, {"epsilon": "ε", "decay": "λ"}, "Parametry modelu"), width="stretch")
+    st.plotly_chart(
+        line_chart(df, {"latency_ms": "Czas przetwarzania"}, "Czas przetwarzania [ms/dok.]"), width="stretch"
+    )
+
+
+st.set_page_config(page_title="evostream", layout="wide")
+if "clusterer" not in st.session_state:
+    reset_state()
+
+adaptation_enabled = render_sidebar()
+if st.session_state.streaming:
+    process_batch(adaptation_enabled)
+
+st.title("evostream")
+render_metrics()
+cluster_tab, telemetry_tab = st.tabs(["Mikroklastry i makroklastry", "Metryki i detekcja dryfu"])
+with cluster_tab:
+    render_cluster_view()
+with telemetry_tab:
+    if st.session_state.history:
+        render_telemetry_view()
     else:
-        st.info(
-            "Brak zarejestrowanych danych telemetrycznych. Rozpocznij strumieniowanie z panelu bocznego."
-        )
+        st.info("Brak danych – uruchom strumień w panelu bocznym.")
 
-elif selected_view == "Baza danych (PostgreSQL)":
-    st.subheader("Baza danych PostgreSQL: Telemetria i historia eksperymentu")
-    if getattr(st.session_state, "db", None) and st.session_state.db.is_connected():
-        st.success(
-            f"**Połączenie aktywne:** PostgreSQL `{config.postgres.host}:{config.postgres.port}` | Baza: `{config.postgres.db}`"
-        )
-        try:
-            df_sql = pd.read_sql(
-                f"SELECT * FROM {config.postgres.results_table} ORDER BY timestamp DESC LIMIT 200;",
-                st.session_state.db.engine,
-            )
-            if len(df_sql) > 0:
-                st.dataframe(df_sql.head(50))
-            else:
-                st.info(
-                    "Tabela `clustering_results` w PostgreSQL jest obecnie pusta. Rozpocznij strumieniowanie, aby automatycznie zapisywać telemetrię."
-                )
-        except Exception as e:
-            st.error(f"Błąd odczytu z bazy: {e}")
-    else:
-        st.error(
-            "**Baza danych PostgreSQL jest obecnie offline.**\nAplikacja działa w niezależnym trybie pamięciowym (In-Memory)."
-        )
-
-if st.session_state.get("is_streaming", False):
-    import time
-
-    time.sleep(stream_delay)
+if st.session_state.streaming:
+    time.sleep(STREAM_DELAY_S)
     st.rerun()

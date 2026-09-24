@@ -1,37 +1,31 @@
-"""
-Figures for the thesis 2 sweep, read from the per-run CSVs written by
-exp_thesis_2_drift.py / run_sweep.py:
-  - thesis_2_band_*.png: mean and min-max range over all runs for each
-    metric, static vs adaptive, with a strip of drift alarms below;
-  - thesis_2_param_convergence_heatmap.png: final epsilon and lambda for
-    every starting configuration;
-  - thesis_2_trajectory_example.png: epsilon and lambda over one run;
-  - thesis_2_summary_purity_gain.png: final purity, static vs adaptive.
-"""
+"""Figures for the thesis 2 sweep, drawn from the per-run CSVs."""
 
 import os
-from typing import Dict, List, Optional, Tuple
 
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 from matplotlib.colors import to_rgba
 from matplotlib.lines import Line2D
 
-from experiments.plot_style import decimal_comma, use_polish_number_format
+from experiments.plot_style import use_polish_number_format
 from experiments.theses.thesis_2.exp_thesis_2_drift import (
     BATCH_SIZE,
     DRIFT_POINT,
     SAMPLES_PER_PHASE,
-    SWEEP_DECAY_VALUES as DECAY_VALUES,
-    SWEEP_EPSILON_VALUES as EPSILON_VALUES,
+)
+from experiments.theses.thesis_2.exp_thesis_2_drift import (
     INITIAL_WARMUP_SIZE as WARMUP_END,
+)
+from experiments.theses.thesis_2.exp_thesis_2_drift import (
+    SWEEP_DECAY_VALUES as DECAY_VALUES,
+)
+from experiments.theses.thesis_2.exp_thesis_2_drift import (
+    SWEEP_EPSILON_VALUES as EPSILON_VALUES,
 )
 from src.core.config import config
 
 RESULTS_DIR = "experiments/theses/thesis_2/results"
-DEFAULT_COMBO = (0.10, 0.005)
 
 STREAM_LENGTH = 2 * SAMPLES_PER_PHASE
 
@@ -55,7 +49,7 @@ plt.rcParams.update(
 )
 
 
-def load_all() -> Dict[Tuple[float, float], pd.DataFrame]:
+def load_all() -> dict[tuple[float, float], pd.DataFrame]:
     dfs = {}
     for eps in EPSILON_VALUES:
         for decay in DECAY_VALUES:
@@ -76,16 +70,18 @@ def _style_axis(ax):
     ax.set_xlim(0, STREAM_LENGTH)
 
 
-def _base_legend_handles() -> List:
+def _base_legend_handles() -> list:
     return [
         mpatches.Patch(facecolor=WARMUP_COLOR, label="Rozgrzewka (IPCA i DenStream)"),
-        Line2D([0], [0], color=DRIFT_LINE_COLOR, ls=(0, (1, 1)), lw=1.8, label=f"Zaplanowany dryf pojęć (t={DRIFT_POINT})"),
+        Line2D(
+            [0], [0], color=DRIFT_LINE_COLOR, ls=(0, (1, 1)), lw=1.8, label=f"Zaplanowany dryf pojęć (t={DRIFT_POINT})"
+        ),
     ]
 
 
-def _detection_counts(dfs: Dict[Tuple[float, float], pd.DataFrame]) -> Dict[float, int]:
+def _detection_counts(dfs: dict[tuple[float, float], pd.DataFrame]) -> dict[float, int]:
     """Number of runs whose detector fired at each sample_idx."""
-    counts: Dict[float, int] = {}
+    counts: dict[float, int] = {}
     for df in dfs.values():
         if "drift_detected" not in df.columns:
             continue
@@ -94,7 +90,7 @@ def _detection_counts(dfs: Dict[Tuple[float, float], pd.DataFrame]) -> Dict[floa
     return counts
 
 
-def _plot_detection_density(ax, dfs: Dict[Tuple[float, float], pd.DataFrame]):
+def _plot_detection_density(ax, dfs: dict[tuple[float, float], pd.DataFrame]):
     """Strip below the main chart: number of runs raising an alarm per batch."""
     ax.axvspan(0, WARMUP_END, color=WARMUP_COLOR, alpha=0.9, zorder=0)
     ax.axvline(DRIFT_POINT, color=DRIFT_LINE_COLOR, linestyle=(0, (1, 1)), lw=1.8, zorder=1)
@@ -115,20 +111,23 @@ def _plot_detection_density(ax, dfs: Dict[Tuple[float, float], pd.DataFrame]):
 
 
 def plot_metric_band(
-    dfs: Dict[Tuple[float, float], pd.DataFrame],
+    dfs: dict[tuple[float, float], pd.DataFrame],
     ylabel: str,
-    static_col: Optional[str],
+    static_col: str | None,
     hot_col: str,
     filename: str,
-    y_lim: Optional[Tuple[float, float]] = None,
-    threshold: Optional[float] = None,
+    y_lim: tuple[float, float] | None = None,
+    threshold: float | None = None,
 ):
     """Mean line and min-max band over all runs, static and adaptive overlaid."""
     hot_stack = pd.concat([df.set_index("sample_idx")[hot_col] for df in dfs.values()], axis=1)
     x = hot_stack.index
 
     fig, (ax, ax_det) = plt.subplots(
-        2, 1, figsize=(11, 7), sharex=True,
+        2,
+        1,
+        figsize=(11, 7),
+        sharex=True,
         gridspec_kw={"height_ratios": [5, 1], "hspace": 0.06},
     )
     _style_axis(ax)
@@ -142,16 +141,24 @@ def plot_metric_band(
     if static_col:
         static_stack = pd.concat([df.set_index("sample_idx")[static_col] for df in dfs.values()], axis=1)
         ax.fill_between(
-            x, static_stack.min(axis=1), static_stack.max(axis=1),
-            facecolor=to_rgba(STATIC_COLOR, 0.16), edgecolor=to_rgba(STATIC_COLOR, 0.85),
-            linewidth=1.0, zorder=1,
+            x,
+            static_stack.min(axis=1),
+            static_stack.max(axis=1),
+            facecolor=to_rgba(STATIC_COLOR, 0.16),
+            edgecolor=to_rgba(STATIC_COLOR, 0.85),
+            linewidth=1.0,
+            zorder=1,
         )
         ax.plot(x, static_stack.mean(axis=1), color=STATIC_COLOR, lw=2.2, zorder=3)
 
     ax.fill_between(
-        x, hot_stack.min(axis=1), hot_stack.max(axis=1),
-        facecolor=to_rgba(HOTSWAP_COLOR, 0.16), edgecolor=to_rgba(HOTSWAP_COLOR, 0.85),
-        linewidth=1.0, zorder=2,
+        x,
+        hot_stack.min(axis=1),
+        hot_stack.max(axis=1),
+        facecolor=to_rgba(HOTSWAP_COLOR, 0.16),
+        edgecolor=to_rgba(HOTSWAP_COLOR, 0.85),
+        linewidth=1.0,
+        zorder=2,
     )
     ax.plot(x, hot_stack.mean(axis=1), color=HOTSWAP_COLOR, lw=2.4, zorder=4)
 
@@ -161,7 +168,16 @@ def plot_metric_band(
 
     handles = _base_legend_handles()
     if threshold is not None:
-        handles.append(Line2D([0], [0], color="red", ls="--", lw=1.6, label=f"Próg sygnału przesunięcia centroidów (δc = {threshold:.2f})".replace(".", ",")))
+        handles.append(
+            Line2D(
+                [0],
+                [0],
+                color="red",
+                ls="--",
+                lw=1.6,
+                label=f"Próg sygnału przesunięcia centroidów (δc = {threshold:.2f})".replace(".", ","),
+            )
+        )
     if static_col:
         handles += [
             Line2D([0], [0], color=STATIC_COLOR, lw=2.2, label="Model statyczny (średnia)"),
@@ -170,123 +186,14 @@ def plot_metric_band(
     handles += [
         Line2D([0], [0], color=HOTSWAP_COLOR, lw=2.4, label="Model adaptacyjny (średnia)"),
         mpatches.Patch(facecolor=HOTSWAP_COLOR, alpha=0.18, label="Model adaptacyjny (zakres min-max)"),
-        mpatches.Patch(facecolor=DETECTION_COLOR, alpha=0.85, label="Alarmy detektora (liczba przebiegów, panel poniżej)"),
+        mpatches.Patch(
+            facecolor=DETECTION_COLOR, alpha=0.85, label="Alarmy detektora (liczba przebiegów, panel poniżej)"
+        ),
     ]
     ax.legend(handles=handles, loc="best", frameon=True, fontsize=9)
 
     plt.tight_layout()
     out_path = f"{RESULTS_DIR}/{filename}"
-    plt.savefig(out_path, dpi=300, bbox_inches="tight")
-    plt.close()
-    print(f"Saved {out_path}")
-
-
-def plot_convergence_heatmaps(dfs: Dict[Tuple[float, float], pd.DataFrame], tail_docs: int = 1000):
-    eps_grid = np.full((len(EPSILON_VALUES), len(DECAY_VALUES)), np.nan)
-    decay_grid = np.full((len(EPSILON_VALUES), len(DECAY_VALUES)), np.nan)
-
-    for i, eps in enumerate(EPSILON_VALUES):
-        for j, decay in enumerate(DECAY_VALUES):
-            df = dfs.get((eps, decay))
-            if df is None:
-                continue
-            tail = df[df["sample_idx"] >= df["sample_idx"].max() - tail_docs]
-            eps_grid[i, j] = tail["eps_adapted"].mean()
-            decay_grid[i, j] = tail["decay_adapted"].mean()
-
-    fig, axs = plt.subplots(1, 2, figsize=(13, 5.5))
-    panels = [
-        (axs[0], eps_grid, rf"Uśredniony $\epsilon(t)$ po ustabilizowaniu (ost. {tail_docs} dok.)", "{:.3f}"),
-        (axs[1], decay_grid, rf"Uśredniony $\lambda(t)$ po ustabilizowaniu (ost. {tail_docs} dok.)", "{:.3f}"),
-    ]
-    for ax, grid, subtitle, fmt in panels:
-        im = ax.imshow(grid, cmap="viridis", aspect="auto")
-        ax.set_xticks(range(len(DECAY_VALUES)))
-        ax.set_xticklabels([decimal_comma(d) for d in DECAY_VALUES])
-        ax.set_yticks(range(len(EPSILON_VALUES)))
-        ax.set_yticklabels([decimal_comma(e) for e in EPSILON_VALUES])
-        ax.set_xlabel(r"Startowe $\lambda_0$")
-        ax.set_ylabel(r"Startowe $\epsilon_0$")
-        ax.set_title(subtitle, fontsize=11)
-        finite_vals = grid[~np.isnan(grid)]
-        norm_mid = (finite_vals.max() + finite_vals.min()) / 2 if finite_vals.size else 0
-        for i in range(grid.shape[0]):
-            for j in range(grid.shape[1]):
-                val = grid[i, j]
-                if not np.isnan(val):
-                    text_color = "white" if val > norm_mid else "black"
-                    ax.text(j, i, decimal_comma(fmt.format(val)), ha="center", va="center", color=text_color, fontsize=9)
-        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-
-    plt.tight_layout()
-    out_path = f"{RESULTS_DIR}/thesis_2_param_convergence_heatmap.png"
-    plt.savefig(out_path, dpi=300, bbox_inches="tight")
-    plt.close()
-    print(f"Saved {out_path}")
-
-
-def plot_trajectory_example(dfs: Dict[Tuple[float, float], pd.DataFrame], combo: Tuple[float, float] = DEFAULT_COMBO):
-    eps, decay = combo
-    df = dfs.get(combo)
-    if df is None:
-        print(f"Combo {combo} missing, skipping trajectory example.")
-        return
-
-    fig, axs = plt.subplots(2, 1, figsize=(11, 7.5), sharex=True)
-    _style_axis(axs[0])
-    _style_axis(axs[1])
-
-    axs[0].plot(df["sample_idx"], df["eps_adapted"], color="#2980b9", lw=2.2)
-    axs[0].axhline(eps, color="#2980b9", ls=":", lw=1.4)
-    axs[0].set_ylabel(r"Promień mikroklastra $\epsilon(t)$")
-
-    axs[1].plot(df["sample_idx"], df["decay_adapted"], color="#8e44ad", lw=2.2)
-    axs[1].axhline(decay, color="#8e44ad", ls=":", lw=1.4)
-    axs[1].set_ylabel(r"Współczynnik wygaszania $\lambda(t)$")
-    axs[1].set_xlabel("Liczba przetworzonych dokumentów")
-
-    handles = _base_legend_handles() + [
-        Line2D([0], [0], color="#2980b9", lw=2.2, label=r"Adaptacyjny $\epsilon(t)$"),
-        Line2D([0], [0], color="#2980b9", ls=":", lw=1.4, label=rf"Start $\epsilon_0$ = {decimal_comma(eps)}"),
-        Line2D([0], [0], color="#8e44ad", lw=2.2, label=r"Adaptacyjny $\lambda(t)$"),
-        Line2D([0], [0], color="#8e44ad", ls=":", lw=1.4, label=rf"Start $\lambda_0$ = {decimal_comma(decay)}"),
-    ]
-    plt.tight_layout()
-    fig.legend(handles=handles, loc="upper center", ncol=3, frameon=True, bbox_to_anchor=(0.5, 0.0))
-    out_path = f"{RESULTS_DIR}/thesis_2_trajectory_example.png"
-    plt.savefig(out_path, dpi=300, bbox_inches="tight")
-    plt.close()
-    print(f"Saved {out_path}")
-
-
-def plot_summary_gain(dfs: Dict[Tuple[float, float], pd.DataFrame], tail_docs: int = 1000):
-    rows = []
-    for (eps, decay), df in dfs.items():
-        tail = df[df["sample_idx"] >= df["sample_idx"].max() - tail_docs]
-        rows.append(
-            {
-                "eps": eps,
-                "decay": decay,
-                "static_purity": tail["static_purity"].mean(),
-                "hotswap_purity": tail["hotswap_purity"].mean(),
-            }
-        )
-    summary = pd.DataFrame(rows)
-
-    fig, ax = plt.subplots(figsize=(6.5, 5.5))
-    means = [summary["static_purity"].mean(), summary["hotswap_purity"].mean()]
-    stds = [summary["static_purity"].std(), summary["hotswap_purity"].std()]
-    colors = [STATIC_COLOR, HOTSWAP_COLOR]
-    labels = ["Model statyczny", "Model adaptacyjny"]
-    x = np.arange(2)
-    ax.bar(x, means, yerr=stds, capsize=6, color=colors, width=0.55)
-    ax.set_xticks(x)
-    ax.set_xticklabels(labels)
-    ax.set_ylabel(f"Czystość po ustabilizowaniu\n(średnia ± odch. std. z {len(summary)} przebiegów)")
-    ax.set_ylim(0, 1.05)
-    ax.grid(True, axis="y", linestyle="--", alpha=0.4)
-    plt.tight_layout()
-    out_path = f"{RESULTS_DIR}/thesis_2_summary_purity_gain.png"
     plt.savefig(out_path, dpi=300, bbox_inches="tight")
     plt.close()
     print(f"Saved {out_path}")
@@ -302,22 +209,21 @@ def main():
         return
 
     plot_metric_band(
-        dfs, "Liczba mikroklastrów", "static_micro", "hotswap_micro", "thesis_2_band_ghost_clusters.png",
+        dfs,
+        "Wskaźnik sylwetki",
+        "static_silhouette",
+        "hotswap_silhouette",
+        "thesis_2_band_silhouette.png",
+        y_lim=(-0.1, 0.3),
     )
     plot_metric_band(
-        dfs, "Czystość", "static_purity", "hotswap_purity", "thesis_2_band_purity.png", y_lim=(0.0, 1.05),
-    )
-    plot_metric_band(
-        dfs, "Wskaźnik sylwetki", "static_silhouette", "hotswap_silhouette", "thesis_2_band_silhouette.png", y_lim=(-0.1, 0.3),
-    )
-    plot_metric_band(
-        dfs, "Przesunięcie centroidu (odl. euklidesowa)", None, "centroid_shift", "thesis_2_band_centroid_shift.png",
+        dfs,
+        "Przesunięcie centroidu (odl. euklidesowa)",
+        None,
+        "centroid_shift",
+        "thesis_2_band_centroid_shift.png",
         threshold=config.drift.centroid_shift_threshold,
     )
-
-    plot_convergence_heatmaps(dfs)
-    plot_trajectory_example(dfs)
-    plot_summary_gain(dfs)
 
     print("All thesis-2 plots generated.")
 

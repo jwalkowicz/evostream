@@ -32,4 +32,3 @@ MODEL_PARAMETERS_SCHEMA = """
     fitness_complexity FLOAT,
     pareto_front_size INTEGER
 """
-

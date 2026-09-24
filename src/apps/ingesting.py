@@ -2,7 +2,6 @@ import random
 import signal
 import time
 from dataclasses import dataclass
-from typing import List, Tuple
 
 from sklearn.datasets import fetch_20newsgroups
 
@@ -30,7 +29,7 @@ class IngesterApp:
         self.running = True
         self.message_count = 0
 
-    def _load_data_with_labels(self, categories: List[str]) -> List[Tuple[str, str]]:
+    def _load_data_with_labels(self, categories: list[str]) -> list[tuple[str, str]]:
         logger.info(f"Loading data for categories: {categories}")
         dataset = fetch_20newsgroups(
             subset="all",
@@ -76,9 +75,7 @@ class IngesterApp:
                         current_pool = phase1_data
                     else:
                         if not drift_logged:
-                            logger.warning(
-                                f"Concept drift triggered at message count {self.message_count}"
-                            )
+                            logger.warning(f"Concept drift triggered at message count {self.message_count}")
                             drift_logged = True
                         current_pool = phase2_data
 
@@ -98,9 +95,7 @@ class IngesterApp:
                 for msg in batch:
                     self.producer.send(topic=self.prototype.topic, value=msg)
 
-                logger.info(
-                    f"Sent batch of {len(batch)} messages. Total sent: {self.message_count}"
-                )
+                logger.info(f"Sent batch of {len(batch)} messages. Total sent: {self.message_count}")
                 time.sleep(self.prototype.batch_interval)
 
         except Exception as e:

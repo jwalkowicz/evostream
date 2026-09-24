@@ -1,19 +1,9 @@
-"""
-Thesis 3 experiment: Pareto fronts and compromise solutions of NSGA-II for
-several projection dimensions.
-
-NSGA-II runs as in a thesis 2 model swap, on a buffer of HOTSWAP_BUFFER_SIZE
-documents projected with an IPCA fitted on that buffer. Each dimension is
-repeated on buffers from both stream phases and several stream orders.
-Because the silhouette objective is not comparable across dimensions, each
-compromise solution is also scored against the true categories (purity, NMI).
-"""
+"""Thesis 3 experiment: Pareto fronts and compromise solutions of NSGA-II for several projection dimensions."""
 
 import argparse
 import itertools
 import time
 from concurrent.futures import ProcessPoolExecutor
-from typing import List, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -44,7 +34,7 @@ N_MACRO_CLUSTERS = len(PHASE1_CATEGORIES)
 EXAMPLE_RUN = (1, STREAM_SEEDS[0])  # (phase, seed) shown in the Pareto-front figure
 
 
-def load_buffer(phase: int, seed: int) -> Tuple[np.ndarray, List[str]]:
+def load_buffer(phase: int, seed: int) -> tuple[np.ndarray, list[str]]:
     """HOTSWAP_BUFFER_SIZE consecutive documents of one stream phase, after
     shuffling that phase with the given seed."""
     texts, labels = _load_or_build_dataset()
@@ -55,7 +45,7 @@ def load_buffer(phase: int, seed: int) -> Tuple[np.ndarray, List[str]]:
     return shuffled[:HOTSWAP_BUFFER_SIZE], shuffled_labels[:HOTSWAP_BUFFER_SIZE]
 
 
-def score_against_labels(params: dict, buffer: np.ndarray, labels: List[str]) -> Tuple[float, float]:
+def score_against_labels(params: dict, buffer: np.ndarray, labels: list[str]) -> tuple[float, float]:
     """Purity and NMI of a DenStream model with the given parameters, trained
     on the buffer the same way as in a model swap."""
     clusterer = StreamClusterer(expected_macro_clusters=N_MACRO_CLUSTERS, window_size=len(buffer))
@@ -64,7 +54,7 @@ def score_against_labels(params: dict, buffer: np.ndarray, labels: List[str]) ->
     return purity_score(labels, preds), float(normalized_mutual_info_score(labels, preds))
 
 
-def run_one(pca_dim: int, phase: int, seed: int) -> Tuple[List[dict], dict]:
+def run_one(pca_dim: int, phase: int, seed: int) -> tuple[list[dict], dict]:
     raw_buffer, labels = load_buffer(phase, seed)
     ipca = IncrementalPCA(n_components=pca_dim)
     ipca.partial_fit(raw_buffer)
@@ -122,7 +112,10 @@ def run_one(pca_dim: int, phase: int, seed: int) -> Tuple[List[dict], dict]:
         **run_id,
         "front_size": len(unique_front),
         "optimization_s": optimization_s,
-        **{k: compromise_row[k] for k in ("epsilon", "decaying_factor", "quality", "complexity", "n_micro_clusters", "micro_macro_ratio")},
+        **{
+            k: compromise_row[k]
+            for k in ("epsilon", "decaying_factor", "quality", "complexity", "n_micro_clusters", "micro_macro_ratio")
+        },
         "purity": purity,
         "nmi": nmi,
     }
@@ -137,8 +130,17 @@ def run_one(pca_dim: int, phase: int, seed: int) -> Tuple[List[dict], dict]:
 def aggregate_by_dimension(runs: pd.DataFrame) -> pd.DataFrame:
     """Mean and std of the compromise solution across all repetitions
     (both phases x all seeds) for each dimension."""
-    metrics = ["front_size", "epsilon", "decaying_factor", "quality", "complexity",
-               "micro_macro_ratio", "purity", "nmi", "optimization_s"]
+    metrics = [
+        "front_size",
+        "epsilon",
+        "decaying_factor",
+        "quality",
+        "complexity",
+        "micro_macro_ratio",
+        "purity",
+        "nmi",
+        "optimization_s",
+    ]
     agg = runs.groupby("pca_dim")[metrics].agg(["mean", "std"])
     agg.columns = [f"{metric}_{stat}" for metric, stat in agg.columns]
     return agg.reset_index()
@@ -160,9 +162,11 @@ def plot_fronts(fronts: pd.DataFrame, out_path: str):
     for d in PCA_DIMS:
         sub = fronts[(fronts["pca_dim"] == d) & (fronts["phase"] == phase) & (fronts["seed"] == seed)]
         sub = sub.sort_values("complexity")
-        line, = ax.plot(sub["complexity"], sub["quality"], "-o", markersize=4, lw=1.5, alpha=0.8, label=f"d = {d}")
+        (line,) = ax.plot(sub["complexity"], sub["quality"], "-o", markersize=4, lw=1.5, alpha=0.8, label=f"d = {d}")
         comp = sub[sub["is_compromise"]]
-        ax.scatter(comp["complexity"], comp["quality"], s=180, marker="*", color=line.get_color(), edgecolor="black", zorder=5)
+        ax.scatter(
+            comp["complexity"], comp["quality"], s=180, marker="*", color=line.get_color(), edgecolor="black", zorder=5
+        )
     ax.scatter([], [], s=180, marker="*", color="white", edgecolor="black", label="rozwiązanie kompromisowe")
     ax.set_xlabel("Złożoność strukturalna $f_2$")
     ax.set_ylabel("Jakość $f_1$ (wskaźnik sylwetki środków mikroklastrów)")
@@ -176,7 +180,15 @@ def plot_compromise_quality(summary: pd.DataFrame, out_path: str):
     use_polish_number_format()
     fig, ax = plt.subplots(figsize=(8, 5))
     for metric, label in [("purity", "Czystość"), ("nmi", "NMI")]:
-        ax.errorbar(summary["pca_dim"], summary[f"{metric}_mean"], yerr=summary[f"{metric}_std"], marker="o", capsize=4, lw=2, label=label)
+        ax.errorbar(
+            summary["pca_dim"],
+            summary[f"{metric}_mean"],
+            yerr=summary[f"{metric}_std"],
+            marker="o",
+            capsize=4,
+            lw=2,
+            label=label,
+        )
     _dimension_axis(ax, "Wartość miary")
     ax.set_ylim(0.0, 1.0)
     ax.legend(loc="best")
@@ -187,7 +199,14 @@ def plot_compromise_quality(summary: pd.DataFrame, out_path: str):
 def plot_compromise_structure(summary: pd.DataFrame, out_path: str):
     use_polish_number_format()
     fig, ax = plt.subplots(figsize=(8, 5))
-    ax.errorbar(summary["pca_dim"], summary["micro_macro_ratio_mean"], yerr=summary["micro_macro_ratio_std"], marker="o", capsize=4, lw=2)
+    ax.errorbar(
+        summary["pca_dim"],
+        summary["micro_macro_ratio_mean"],
+        yerr=summary["micro_macro_ratio_std"],
+        marker="o",
+        capsize=4,
+        lw=2,
+    )
     _dimension_axis(ax, "$N_{micro} / N_{macro}$")
     plt.savefig(out_path, dpi=300, bbox_inches="tight")
     plt.close()
@@ -198,7 +217,9 @@ def plot_compromise_params(summary: pd.DataFrame, out_path: str):
     bounds = config.evolution.param_bounds
     fig, axes = plt.subplots(2, 1, figsize=(8, 7), sharex=True)
     for ax, param, label in [(axes[0], "epsilon", "$\\varepsilon^*$"), (axes[1], "decaying_factor", "$\\lambda^*$")]:
-        ax.errorbar(summary["pca_dim"], summary[f"{param}_mean"], yerr=summary[f"{param}_std"], marker="o", capsize=4, lw=2)
+        ax.errorbar(
+            summary["pca_dim"], summary[f"{param}_mean"], yerr=summary[f"{param}_std"], marker="o", capsize=4, lw=2
+        )
         ax.set_ylim(*bounds[param])
         _dimension_axis(ax, label)
     axes[0].set_xlabel("")

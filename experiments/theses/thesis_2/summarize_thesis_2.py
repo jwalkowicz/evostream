@@ -74,24 +74,32 @@ def main():
     delays = table.first_alarm_delay
     print(f"First alarm after the change: median {delays.median():.0f}, range {delays.min()}-{delays.max()} documents")
     print(f"First-alarm signal: {table.first_alarm_signal.value_counts().to_dict()}")
-    print(f"Alarms after the change per run: mean {table.alarms_after_change.mean():.1f}, "
-          f"range {table.alarms_after_change.min()}-{table.alarms_after_change.max()}")
+    print(
+        f"Alarms after the change per run: mean {table.alarms_after_change.mean():.1f}, "
+        f"range {table.alarms_after_change.min()}-{table.alarms_after_change.max()}"
+    )
 
     print("\nPurity per stream segment (mean ± std over runs):")
     for start, end in SEGMENTS:
         s, a = table[f"static_{start + 1}_{end}"], table[f"adaptive_{start + 1}_{end}"]
-        print(f"  {start + 1:>5}-{end:<5}  static {s.mean():.3f} ± {s.std():.3f} | "
-              f"adaptive {a.mean():.3f} ± {a.std():.3f} | adaptive better in {(a > s).sum()}/{len(table)}")
+        print(
+            f"  {start + 1:>5}-{end:<5}  static {s.mean():.3f} ± {s.std():.3f} | "
+            f"adaptive {a.mean():.3f} ± {a.std():.3f} | adaptive better in {(a > s).sum()}/{len(table)}"
+        )
     print("Silhouette (mean over runs):")
     for start, end in [(6000, 10000), (6000, 9000), (9000, 10000)]:
         s, a = table[f"static_silhouette_{start + 1}_{end}"], table[f"adaptive_silhouette_{start + 1}_{end}"]
         print(f"  {start + 1:>5}-{end:<5}  static {s.mean():.3f} | adaptive {a.mean():.3f}")
 
     print("\nTable 5 - results per starting epsilon (identical for every starting lambda):")
-    per_eps = table.groupby("eps")[["static_9001_10000", "adaptive_9001_10000", "first_alarm_delay", "final_eps"]].mean()
+    per_eps = table.groupby("eps")[
+        ["static_9001_10000", "adaptive_9001_10000", "first_alarm_delay", "final_eps"]
+    ].mean()
     print(per_eps.round(3).to_string())
-    print(f"\nFinal epsilon: mean {table.final_eps.mean():.3f} ± {table.final_eps.std():.3f}, "
-          f"range {table.final_eps.min():.3f}-{table.final_eps.max():.3f}")
+    print(
+        f"\nFinal epsilon: mean {table.final_eps.mean():.3f} ± {table.final_eps.std():.3f}, "
+        f"range {table.final_eps.min():.3f}-{table.final_eps.max():.3f}"
+    )
 
     print("\nExtra swaps (second and later alarms), one run per starting epsilon:")
     for eps in sorted(table.eps.unique()):

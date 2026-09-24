@@ -1,18 +1,10 @@
-"""
-Thesis 2 experiment: static DenStream vs. EvoStream (NSGA-II hot-swap) under
-an abrupt concept drift on 20-newsgroups text streams.
-
-Runs a single (initial_eps, initial_decay) configuration end-to-end and saves
-the per-batch metrics to CSV. Plotting lives in plot_thesis_2_drift.py, which
-consumes these CSVs across a full parameter sweep (see run_sweep.py).
-"""
+"""Thesis 2 experiment: static vs. adaptive DenStream on a stream with an abrupt topic change."""
 
 import argparse
 import copy
 import os
 import pickle
 import random
-from typing import List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -35,12 +27,20 @@ EMBEDDINGS_CACHE_PATH = f"{RESULTS_DIR}/cached_embeddings.npy"
 # Two disjoint sets of six categories; the stream switches from the first
 # to the second after SAMPLES_PER_PHASE documents.
 PHASE1_CATEGORIES = [
-    "sci.space", "sci.med", "rec.autos",
-    "sci.electronics", "comp.graphics", "sci.crypt",
+    "sci.space",
+    "sci.med",
+    "rec.autos",
+    "sci.electronics",
+    "comp.graphics",
+    "sci.crypt",
 ]
 PHASE2_CATEGORIES = [
-    "rec.sport.baseball", "comp.sys.ibm.pc.hardware", "talk.politics.mideast",
-    "rec.sport.hockey", "rec.motorcycles", "talk.politics.guns",
+    "rec.sport.baseball",
+    "comp.sys.ibm.pc.hardware",
+    "talk.politics.mideast",
+    "rec.sport.hockey",
+    "rec.motorcycles",
+    "talk.politics.guns",
 ]
 SAMPLES_PER_PHASE = 5000
 DRIFT_POINT = SAMPLES_PER_PHASE
@@ -56,16 +56,14 @@ SWEEP_DECAY_VALUES = [0.005, 0.02, 0.04, 0.06, 0.08]
 
 
 def create_dataset_stream(
-    phase1_categories: List[str],
-    phase2_categories: List[str],
+    phase1_categories: list[str],
+    phase2_categories: list[str],
     samples_per_phase: int = SAMPLES_PER_PHASE,
-) -> Tuple[List[str], List[str]]:
+) -> tuple[list[str], list[str]]:
     preprocessor = TextPreprocessor()
 
     def load_cat_data(cats, count):
-        raw = fetch_20newsgroups(
-            subset="all", categories=cats, remove=("headers", "footers", "quotes")
-        )
+        raw = fetch_20newsgroups(subset="all", categories=cats, remove=("headers", "footers", "quotes"))
         pairs = []
         for text, target_idx in zip(raw.data, raw.target):
             cleaned = preprocessor.clean(text)
@@ -85,21 +83,19 @@ def create_dataset_stream(
     return texts, labels
 
 
-def _load_or_build_dataset() -> Tuple[List[str], List[str]]:
+def _load_or_build_dataset() -> tuple[list[str], list[str]]:
     """Cleaned texts and labels of the whole stream, cached after the first call."""
     if os.path.exists(DATASET_CACHE_PATH):
         with open(DATASET_CACHE_PATH, "rb") as f:
             return pickle.load(f)
 
-    texts, labels = create_dataset_stream(
-        PHASE1_CATEGORIES, PHASE2_CATEGORIES, SAMPLES_PER_PHASE
-    )
+    texts, labels = create_dataset_stream(PHASE1_CATEGORIES, PHASE2_CATEGORIES, SAMPLES_PER_PHASE)
     with open(DATASET_CACHE_PATH, "wb") as f:
         pickle.dump((texts, labels), f)
     return texts, labels
 
 
-def _load_or_compute_embeddings(texts: List[str]) -> np.ndarray:
+def _load_or_compute_embeddings(texts: list[str]) -> np.ndarray:
     if os.path.exists(EMBEDDINGS_CACHE_PATH):
         logger.info("Loading cached SBERT embeddings...")
         return np.load(EMBEDDINGS_CACHE_PATH)
@@ -108,16 +104,12 @@ def _load_or_compute_embeddings(texts: List[str]) -> np.ndarray:
     from sentence_transformers import SentenceTransformer
 
     encoder = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
-    embeddings = encoder.encode(
-        texts, batch_size=128, device="cpu", normalize_embeddings=True
-    )
+    embeddings = encoder.encode(texts, batch_size=128, device="cpu", normalize_embeddings=True)
     np.save(EMBEDDINGS_CACHE_PATH, embeddings)
     return embeddings
 
 
-def run_drift_experiment(
-    initial_eps: float = 0.10, initial_decay: float = 0.005
-) -> pd.DataFrame:
+def run_drift_experiment(initial_eps: float = 0.10, initial_decay: float = 0.005) -> pd.DataFrame:
     set_seed(42)
 
     assert len(PHASE1_CATEGORIES) == len(PHASE2_CATEGORIES)
@@ -175,11 +167,11 @@ def run_drift_experiment(
 
     records = []
     collecting_for_hotswap = False
-    hotswap_buffer_collected_raw: List[np.ndarray] = []
+    hotswap_buffer_collected_raw: list[np.ndarray] = []
     # The swap is triggered only by the detector; DRIFT_POINT is used for
     # evaluation and plots, never by the system.
-    trigger_sample_idx: Optional[int] = None  # first alarm
-    swap_sample_idx: Optional[int] = None  # first deployed replacement model
+    trigger_sample_idx: int | None = None  # first alarm
+    swap_sample_idx: int | None = None  # first deployed replacement model
 
     for b in range(start_batch, n_batches):
         s_i = b * BATCH_SIZE
@@ -215,9 +207,7 @@ def run_drift_experiment(
                 logger.info("Swap buffer full, refitting IPCA and optimising DenStream parameters")
                 new_ipca = IncrementalPCA(n_components=PCA_COMPONENTS)
                 new_ipca.partial_fit(np.array(hotswap_buffer_collected_raw))
-                new_buffer_proj = normalize(
-                    new_ipca.transform(np.array(hotswap_buffer_collected_raw))
-                )
+                new_buffer_proj = normalize(new_ipca.transform(np.array(hotswap_buffer_collected_raw)))
                 compromise, _, _ = opt_hotswap.evolve(data_buffer=new_buffer_proj)
                 c_hotswap.hot_swap_model(new_params=compromise.params, window_data=new_buffer_proj)
                 ipca_hotswap = new_ipca
@@ -266,9 +256,7 @@ def run_drift_experiment(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Static vs. hot-swap DenStream drift-adaptation experiment."
-    )
+    parser = argparse.ArgumentParser(description="Static vs. hot-swap DenStream drift-adaptation experiment.")
     parser.add_argument("--eps", type=float, default=0.10)
     parser.add_argument("--decay", type=float, default=0.005)
     args = parser.parse_args()

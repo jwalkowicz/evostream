@@ -1,10 +1,4 @@
-"""
-Search-space bounds for epsilon (thesis section 3.4).
-
-Runs the clusterer on the first phase of the validation stream for a grid of
-epsilon values, at both ends of the lambda range and on several stream
-orders, and records clustering quality and the number of p-micro-clusters.
-"""
+"""Search-space bounds for epsilon on the validation stream (thesis section 3.4)."""
 
 import argparse
 import itertools
@@ -33,9 +27,7 @@ def run_one(seed: int, decay: float, epsilon: float) -> dict:
     embeddings, labels = load_validation_stream()
     embeddings = embeddings[:VALIDATION_SAMPLES_PER_PHASE]
     labels = labels[:VALIDATION_SAMPLES_PER_PHASE]
-    df = run_streaming_simulation(
-        *shuffle_stream(embeddings, labels, seed), PCA_DIM, epsilon, decaying_factor=decay
-    )
+    df = run_streaming_simulation(*shuffle_stream(embeddings, labels, seed), PCA_DIM, epsilon, decaying_factor=decay)
     return {
         "seed": seed,
         "decaying_factor": decay,

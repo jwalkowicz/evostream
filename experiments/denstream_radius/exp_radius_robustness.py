@@ -7,9 +7,7 @@ parallel processes, so the timings here are only indicative.
 import argparse
 import itertools
 from concurrent.futures import ProcessPoolExecutor
-from typing import Optional
 
-import matplotlib.pyplot as plt
 import pandas as pd
 
 from experiments.theses.thesis_1.exp_thesis_1_ipca import (
@@ -26,7 +24,7 @@ RESULTS_DIR = "experiments/denstream_radius/results"
 RADIUS_MODES = ["river", "fixed"]
 
 
-def run_one(seed: int, radius: str, pca_dim: Optional[int], epsilon: float) -> dict:
+def run_one(seed: int, radius: str, pca_dim: int | None, epsilon: float) -> dict:
     set_river_radius_fix(radius == "fixed")
     _, embeddings, labels = load_phase1_stream()
     df = run_streaming_simulation(*shuffle_stream(embeddings, labels, seed), pca_dim, epsilon)
@@ -63,29 +61,6 @@ def best_epsilon_table(runs: pd.DataFrame) -> pd.DataFrame:
     return best.sort_values(["pca_dim", "radius"], ascending=[False, True])
 
 
-def plot_purity_vs_epsilon(runs: pd.DataFrame, out_path: str):
-    plt.rcParams.update({"font.size": 10, "font.family": "serif"})
-    dims = sorted(runs["pca_dim"].unique(), reverse=True)
-    fig, axes = plt.subplots(2, 3, figsize=(13, 7), sharey=True)
-    labels = {"river": "promień river", "fixed": "promień poprawiony"}
-
-    for ax, dim in zip(axes.flat, dims):
-        for radius in RADIUS_MODES:
-            sub = runs[(runs["pca_dim"] == dim) & (runs["radius"] == radius)]
-            stats = sub.groupby("epsilon")["mean_purity"].agg(["mean", "std"])
-            ax.errorbar(stats.index, stats["mean"], yerr=stats["std"], marker="o", capsize=3, label=labels[radius])
-        ax.set_title("Pełne SBERT (384d)" if dim == 384 else f"IPCA (d={dim})")
-        ax.set_xlabel("ε")
-        ax.grid(True, linestyle="--", alpha=0.6)
-    for ax in axes[:, 0]:
-        ax.set_ylabel("Średnia czystość")
-    axes.flat[0].legend()
-
-    plt.tight_layout()
-    plt.savefig(out_path, format="pdf", bbox_inches="tight")
-    plt.close()
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--workers", type=int, default=4)
@@ -101,7 +76,6 @@ def main():
 
     best = best_epsilon_table(runs)
     best.to_csv(f"{RESULTS_DIR}/radius_robustness_best_epsilon.csv", index=False)
-    plot_purity_vs_epsilon(runs, f"{RESULTS_DIR}/radius_robustness_purity_vs_epsilon.pdf")
 
     print(best.round(3).to_string(index=False))
 

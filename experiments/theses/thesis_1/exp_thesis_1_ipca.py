@@ -1,22 +1,13 @@
-"""
-Thesis 1 experiment: clustering quality and per-document time of DenStream
-on full SBERT embeddings vs. IPCA projections of several dimensions.
-
-Uses the first phase of the thesis 2 stream with the same settings. Every
-dimension runs over the same epsilon grid and is reported at its best
-epsilon; each configuration is repeated on several stream orders
-(STREAM_SEEDS). --radius selects the micro-cluster radius formula
-(river's or the corrected one, see src/domain/clustering.py).
-"""
+"""Thesis 1 experiment: quality and time of DenStream on full SBERT embeddings vs. IPCA projections.
+--radius selects river's or the corrected micro-cluster radius."""
 
 import argparse
 import time
-from typing import List, Optional
 
 import matplotlib.pyplot as plt
-from matplotlib.ticker import MultipleLocator
 import numpy as np
 import pandas as pd
+from matplotlib.ticker import MultipleLocator
 from sklearn.decomposition import IncrementalPCA
 from sklearn.preprocessing import normalize
 
@@ -37,7 +28,7 @@ from src.domain.clustering import StreamClusterer, set_river_radius_fix
 RESULTS_DIR = "experiments/theses/thesis_1/results"
 
 # None = full 384-dimensional SBERT embeddings, no projection.
-PCA_DIMS: List[Optional[int]] = [None, 128, 64, 32, 16, 8]
+PCA_DIMS: list[int | None] = [None, 128, 64, 32, 16, 8]
 EPSILON_GRID = [0.05, 0.10, 0.20, 0.30, 0.50]
 # Each seed gives a different document order (and so a different warm-up sample).
 STREAM_SEEDS = [0, 1, 2]
@@ -56,12 +47,12 @@ def load_phase1_stream():
     )
 
 
-def shuffle_stream(embeddings: np.ndarray, labels: List[str], seed: int):
+def shuffle_stream(embeddings: np.ndarray, labels: list[str], seed: int):
     order = np.random.default_rng(seed).permutation(len(embeddings))
     return embeddings[order], [labels[i] for i in order]
 
 
-def measure_sbert_latency_ms(texts: List[str]) -> float:
+def measure_sbert_latency_ms(texts: list[str]) -> float:
     """SBERT cost per document is the same for every variant, so it is
     measured once on a sample instead of re-encoding the whole stream."""
     from sentence_transformers import SentenceTransformer
@@ -76,20 +67,13 @@ def measure_sbert_latency_ms(texts: List[str]) -> float:
 
 def run_streaming_simulation(
     embeddings: np.ndarray,
-    labels: List[str],
-    pca_dim: Optional[int],
+    labels: list[str],
+    pca_dim: int | None,
     epsilon: float,
-    decaying_factor: Optional[float] = None,
+    decaying_factor: float | None = None,
 ) -> pd.DataFrame:
-    """Streams the documents through (IPCA ->) DenStream batch by batch.
-
-    The first INITIAL_WARMUP_SIZE documents form the warm-up buffer: IPCA is
-    fitted on them once and then frozen, and DenStream is warm-started on
-    them - the same procedure as after a model swap in thesis 2. They are not
-    scored. Latency covers only the per-batch stream work (projection +
-    clustering); the one-off IPCA fit is reported separately. The decaying
-    factor defaults to the config value.
-    """
+    """Streams the documents through (IPCA ->) DenStream in batches; the warm-up documents fit IPCA,
+    warm-start DenStream and are not scored."""
     set_seed(config.seed)
     n_categories = len(set(labels))
 
@@ -155,10 +139,7 @@ def run_streaming_simulation(
 
 
 def summarize(timeseries: pd.DataFrame, sbert_ms: float) -> pd.DataFrame:
-    """One row per (dimension, epsilon): each run is first averaged over the
-    stream, then mean and std are taken across stream seeds. The best
-    epsilon (by mean purity) is flagged for each dimension. Speed-up is
-    relative to full SBERT at its own best epsilon."""
+    """One row per (dimension, epsilon), mean and std over stream orders, with the best epsilon flagged."""
     per_run = (
         timeseries.groupby(["pca_dim", "epsilon", "seed"])
         .agg(
@@ -201,10 +182,7 @@ def summarize(timeseries: pd.DataFrame, sbert_ms: float) -> pd.DataFrame:
 
 
 def plot_purity_band(timeseries: pd.DataFrame, summary: pd.DataFrame, out_path: str):
-    """Purity over the stream, one panel per dimension: the line is the best
-    epsilon, the band the min-max range over the whole epsilon grid (each
-    curve averaged over stream orders), so the figure also shows how
-    sensitive every dimension is to epsilon and where the model collapses."""
+    """Purity per dimension: line for the best epsilon, band for the range over the epsilon grid (thesis Figure 7)."""
     use_polish_number_format()
     plt.rcParams.update({"font.size": 11, "font.family": "serif"})
     dims = sorted(timeseries["pca_dim"].unique(), reverse=True)
@@ -215,16 +193,23 @@ def plot_purity_band(timeseries: pd.DataFrame, summary: pd.DataFrame, out_path: 
     for ax, dim in zip(axes.flat, dims):
         curves = (
             timeseries[timeseries["pca_dim"] == dim]
-            .groupby(["epsilon", "samples_seen"])["purity"].mean()
+            .groupby(["epsilon", "samples_seen"])["purity"]
+            .mean()
             .unstack("epsilon")
-            .ewm(span=5).mean()
+            .ewm(span=5)
+            .mean()
         )
-        ax.axvspan(0, INITIAL_WARMUP_SIZE, color="#b2ebf2", alpha=0.9, zorder=0,
-                   label="Rozgrzewka (IPCA i DenStream)")
-        ax.fill_between(curves.index, curves.min(axis=1), curves.max(axis=1), color="#2980b9",
-                        alpha=0.25, lw=0, label=f"Zakres dla ε ∈ {{{grid}}}")
-        ax.plot(curves.index, curves[best_eps[dim]], color="#2980b9", lw=2,
-                label="Najlepsza wartość ε")
+        ax.axvspan(0, INITIAL_WARMUP_SIZE, color="#b2ebf2", alpha=0.9, zorder=0, label="Rozgrzewka (IPCA i DenStream)")
+        ax.fill_between(
+            curves.index,
+            curves.min(axis=1),
+            curves.max(axis=1),
+            color="#2980b9",
+            alpha=0.25,
+            lw=0,
+            label=f"Zakres dla ε ∈ {{{grid}}}",
+        )
+        ax.plot(curves.index, curves[best_eps[dim]], color="#2980b9", lw=2, label="Najlepsza wartość ε")
         ax.set_title("d = 384 (bez IPCA)" if dim == 384 else f"d = {dim}", fontsize=11)
         ax.set_ylim(0.0, 1.0)
         ax.set_xlim(0, timeseries["samples_seen"].max())

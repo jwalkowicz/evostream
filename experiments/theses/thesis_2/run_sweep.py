@@ -7,7 +7,6 @@ not depend on the number of workers.
 import argparse
 import itertools
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from typing import List, Tuple
 
 from experiments.theses.thesis_2.exp_thesis_2_drift import (
     SWEEP_DECAY_VALUES,
@@ -18,7 +17,7 @@ from experiments.theses.thesis_2.plot_thesis_2_drift import main as generate_all
 from src.core.logger import logger
 
 # Two corners of the grid, for a quick check before the full sweep.
-QUICK_COMBOS: List[Tuple[float, float]] = [(0.10, 0.005), (0.40, 0.08)]
+QUICK_COMBOS: list[tuple[float, float]] = [(0.10, 0.005), (0.40, 0.08)]
 
 DEFAULT_WORKERS = 4
 
@@ -33,7 +32,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
     parser.add_argument(
-        "--quick", action="store_true",
+        "--quick",
+        action="store_true",
         help="Run only the small QUICK_COMBOS validation set instead of the full 5x5 grid.",
     )
     parser.add_argument("--skip-plots", action="store_true")

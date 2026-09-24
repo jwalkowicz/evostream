@@ -1,10 +1,4 @@
-"""
-Analysis of the SBERT embedding space (thesis section 3.3) on the 5000
-documents of the thesis 1 stream: intrinsic dimension (Levina-Bickel MLE,
-k = 10..20), cumulative explained variance, and the distance contrast ratio
-DCR = (max - min) / mean pairwise distance after projection and
-normalisation. Uses standard PCA to get exact explained variance.
-"""
+"""Intrinsic dimension, explained variance and distance contrast of the SBERT embeddings (thesis section 3.3)."""
 
 import json
 
@@ -94,11 +88,15 @@ def main():
         )
 
     plot_curve(
-        DIMS, df["explained_variance_pct"], "Skumulowana wariancja wyjaśniona [%]",
+        DIMS,
+        df["explained_variance_pct"],
+        "Skumulowana wariancja wyjaśniona [%]",
         f"{RESULTS_DIR}/dimensionality_variance.png",
     )
     plot_curve(
-        DIMS, df["dcr"], "Współczynnik kontrastu odległości (DCR)",
+        DIMS,
+        df["dcr"],
+        "Współczynnik kontrastu odległości (DCR)",
         f"{RESULTS_DIR}/dimensionality_dcr.png",
     )
 

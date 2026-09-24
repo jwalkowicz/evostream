@@ -1,13 +1,10 @@
-import pandas as pd
 import psycopg2
 
 from src.core.logger import logger
 
 
 class DBAdmin:
-    def __init__(
-        self, dbname: str, user: str, host: str, password: str, port: int = 5432
-    ):
+    def __init__(self, dbname: str, user: str, host: str, password: str, port: int = 5432):
         self.dbname = dbname
         self.user = user
         self.host = host
@@ -26,14 +23,10 @@ class DBAdmin:
                 port=self.port,
                 connect_timeout=3,
             )
-            logger.info(
-                f"Connected to PostgreSQL at {self.host}:{self.port}/{self.dbname}"
-            )
+            logger.info(f"Connected to PostgreSQL at {self.host}:{self.port}/{self.dbname}")
         except Exception as e:
             self.connection = None
-            logger.debug(
-                f"PostgreSQL connection offline ({self.host}:{self.port}/{self.dbname}): {e}"
-            )
+            logger.debug(f"PostgreSQL connection offline ({self.host}:{self.port}/{self.dbname}): {e}")
 
     def is_connected(self) -> bool:
         if self.connection is None or self.connection.closed != 0:
@@ -79,9 +72,7 @@ class DBAdmin:
             valid_cols = set()
 
         if valid_cols:
-            filtered_data = {
-                k: v for k, v in data.items() if k in valid_cols and k != "id"
-            }
+            filtered_data = {k: v for k, v in data.items() if k in valid_cols and k != "id"}
         else:
             filtered_data = {k: v for k, v in data.items() if k != "id"}
 
@@ -104,19 +95,6 @@ class DBAdmin:
             except Exception as e:
                 self.connection.rollback()
                 logger.error(f"Failed to insert data into '{table}': {e}")
-
-    def fetch_dataframe(self, query: str, params: tuple = ()) -> pd.DataFrame:
-        if not self.is_connected():
-            return pd.DataFrame()
-        try:
-            return pd.read_sql_query(query, self.connection, params=params)
-        except Exception as e:
-            logger.error(f"Failed to fetch DataFrame: {e}")
-            return pd.DataFrame()
-
-    def get_recent_results(self, limit: int = 100) -> pd.DataFrame:
-        query = f"SELECT * FROM clustering_results ORDER BY timestamp DESC LIMIT {int(limit)};"
-        return self.fetch_dataframe(query)
 
     def close(self):
         if self.connection and not self.connection.closed:

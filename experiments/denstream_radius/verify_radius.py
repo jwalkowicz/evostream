@@ -1,11 +1,4 @@
-"""
-Compares river's micro-cluster radius and the corrected formula with the
-radius computed directly from the points (RMS distance from the centre):
-  A. the 2-D Gaussian cloud from river issue #2004, placed at several positions;
-  B. 20 documents in 16 dimensions, embedded in 384 dimensions and rotated
-     (distances unchanged, so the radius must not change);
-  C. random groups of 20 raw SBERT embeddings.
-"""
+"""Compares river's micro-cluster radius and the corrected one with the radius computed from the points."""
 
 import numpy as np
 import pandas as pd
@@ -26,9 +19,7 @@ GROUP_SIZE = 20
 
 
 def micro_cluster_of(points: np.ndarray) -> DenStreamMicroCluster:
-    mc = DenStreamMicroCluster(
-        x=dict(enumerate(points[0])), timestamp=0, decaying_factor=0.01
-    )
+    mc = DenStreamMicroCluster(x=dict(enumerate(points[0])), timestamp=0, decaying_factor=0.01)
     for p in points[1:]:
         mc.insert(dict(enumerate(p)), timestamp=0)
     return mc
@@ -71,9 +62,7 @@ def main():
     rows.append(compare("B_rotation", "16d", group))
     rows.append(compare("B_rotation", "16d rotated", group @ ortho_group.rvs(16, random_state=1)))
     rows.append(compare("B_rotation", "zero-padded to 384d", padded))
-    rows.append(
-        compare("B_rotation", "zero-padded to 384d, rotated", padded @ ortho_group.rvs(384, random_state=2))
-    )
+    rows.append(compare("B_rotation", "zero-padded to 384d, rotated", padded @ ortho_group.rvs(384, random_state=2)))
 
     for i in range(5):
         docs = embeddings[rng.choice(len(embeddings), GROUP_SIZE, replace=False)]

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import os
-from typing import Any, Dict, List, Optional, Tuple, Type
+from typing import Any
 
 from pydantic import BaseModel
 from pydantic_settings import (
@@ -10,6 +9,7 @@ from pydantic_settings import (
     SettingsConfigDict,
     YamlConfigSettingsSource,
 )
+
 
 class KafkaSettings(BaseModel):
     topic: KafkaTopic
@@ -30,29 +30,29 @@ class KafkaTopic(BaseModel):
 
 class KafkaEventSchema(BaseModel):
     text_column: str
-    vector_column: str
 
 
 class KafkaConsumer(BaseModel):
-    preprocessor_group: str
     clusterer_group: str
     offset_reset: str
 
+
 class DatasetSettings(BaseModel):
     name: str = "20newsgroups"
-    categories_concept_a: List[str] = ["sci.space", "sci.med", "rec.autos"]
-    categories_concept_b: List[str] = [
+    categories_concept_a: list[str] = ["sci.space", "sci.med", "rec.autos"]
+    categories_concept_b: list[str] = [
         "rec.sport.baseball",
         "comp.sys.ibm.pc.hardware",
         "talk.politics.mideast",
     ]
-    categories_concept_c: List[str] = [
+    categories_concept_c: list[str] = [
         "comp.graphics",
         "soc.religion.christian",
         "sci.crypt",
     ]
     max_samples_per_concept: int = 1000
     text_column: str = "text"
+
 
 class MLSettings(BaseModel):
     embedding_model: str
@@ -67,14 +67,9 @@ class DenStreamSettings(BaseModel):
     mu: int = 2
     beta: float = 0.75
     decaying_factor: float = 0.005
-    offline_eps: float = 0.70
-    offline_min_samples: int = 1
     window_size: int = 300
     n_samples_init: int = 1
     fix_river_radius: bool = False
-    adaptive_eps: bool = True
-    eps_percentile: float = 0.40
-    eps_scale: float = 1.8
 
 
 class DriftSettings(BaseModel):
@@ -82,7 +77,6 @@ class DriftSettings(BaseModel):
     min_warmup_steps: int = 5
     quality_drop_sigma: float = 2.0
     cooldown_steps: int = 20
-    divergence_threshold: float = 0.25
     consecutive_drops_required: int = 2
     centroid_shift_threshold: float = 0.30
     quality_absolute_floor: float = 0.08
@@ -98,11 +92,10 @@ class EvolutionSettings(BaseModel):
     mutation_rate: float = 0.2
     mutation_eta: float = 20.0
     fixed_mu: int = 2
-    beta: float = 0.75
     n_samples_init: int = 1
     min_eval_buffer: int = 40
     hotswap_buffer_size: int = 500
-    param_bounds: Dict[str, Any] = {
+    param_bounds: dict[str, Any] = {
         "epsilon": [0.05, 0.40],
         "decaying_factor": [0.005, 0.08],
     }
@@ -124,27 +117,25 @@ class PostgresTableNames(BaseModel):
 
 class Settings(BaseSettings):
     seed: int = 42
-    kafka: Optional[KafkaSettings] = None
-    dataset: Optional[DatasetSettings] = None
-    ml: Optional[MLSettings] = None
+    kafka: KafkaSettings | None = None
+    dataset: DatasetSettings | None = None
+    ml: MLSettings | None = None
     denstream: DenStreamSettings = DenStreamSettings()
     drift: DriftSettings = DriftSettings()
     evolution: EvolutionSettings = EvolutionSettings()
     postgres: PostgresSettings
 
-    model_config = SettingsConfigDict(
-        env_file=".env", env_nested_delimiter="_", extra="ignore"
-    )
+    model_config = SettingsConfigDict(env_file=".env", env_nested_delimiter="_", extra="ignore")
 
     @classmethod
     def settings_customise_sources(
         cls,
-        settings_cls: Type[BaseSettings],
+        settings_cls: type[BaseSettings],
         init_settings: PydanticBaseSettingsSource,
         env_settings: PydanticBaseSettingsSource,
         dotenv_settings: PydanticBaseSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,
-    ) -> Tuple[PydanticBaseSettingsSource, ...]:
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
 
         yaml_path = "config/config.yaml"
         yaml_source = YamlConfigSettingsSource(settings_cls, yaml_file=yaml_path)
@@ -155,10 +146,6 @@ class Settings(BaseSettings):
             dotenv_settings,
             yaml_source,
         )
-
-    @property
-    def denstream_params(self) -> dict:
-        return self.denstream.model_dump()
 
 
 config = Settings()

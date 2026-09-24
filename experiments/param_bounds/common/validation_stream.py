@@ -6,7 +6,6 @@ four after an abrupt topic change, prepared the same way as the thesis stream.
 
 import os
 import pickle
-from typing import List, Tuple
 
 import numpy as np
 
@@ -14,10 +13,16 @@ from experiments.theses.thesis_2.exp_thesis_2_drift import create_dataset_stream
 from src.core.config import config
 
 VALIDATION_PHASE1_CATEGORIES = [
-    "comp.windows.x", "misc.forsale", "soc.religion.christian", "talk.politics.misc",
+    "comp.windows.x",
+    "misc.forsale",
+    "soc.religion.christian",
+    "talk.politics.misc",
 ]
 VALIDATION_PHASE2_CATEGORIES = [
-    "comp.os.ms-windows.misc", "comp.sys.mac.hardware", "alt.atheism", "talk.religion.misc",
+    "comp.os.ms-windows.misc",
+    "comp.sys.mac.hardware",
+    "alt.atheism",
+    "talk.religion.misc",
 ]
 VALIDATION_SAMPLES_PER_PHASE = 3000
 
@@ -26,7 +31,7 @@ DATASET_CACHE_PATH = f"{CACHE_DIR}/validation_dataset.pkl"
 EMBEDDINGS_CACHE_PATH = f"{CACHE_DIR}/validation_embeddings.npy"
 
 
-def load_validation_stream() -> Tuple[np.ndarray, List[str]]:
+def load_validation_stream() -> tuple[np.ndarray, list[str]]:
     """Both phases of the validation stream (SBERT embeddings and category
     labels), cached after the first call."""
     if os.path.exists(DATASET_CACHE_PATH):

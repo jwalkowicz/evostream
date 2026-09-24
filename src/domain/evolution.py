@@ -1,6 +1,6 @@
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 from pymoo.algorithms.moo.nsga2 import NSGA2
@@ -20,48 +20,26 @@ from src.domain.clustering import group_micro_clusters, micro_cluster_centers
 
 @dataclass
 class Individual:
-    params: Dict[str, float]
+    params: dict[str, float]
     objectives: np.ndarray = field(default_factory=lambda: np.zeros(2))
-    rank: int = 0
-    crowding_dist: float = 0.0
     quality_score: float = 0.0
     complexity_score: float = 0.0
-
-    def dominates(self, other: "Individual") -> bool:
-        return bool(
-            np.all(self.objectives <= other.objectives)
-            and np.any(self.objectives < other.objectives)
-        )
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Individual):
             return False
-        return self.params == other.params and bool(
-            np.allclose(self.objectives, other.objectives)
-        )
+        return self.params == other.params and bool(np.allclose(self.objectives, other.objectives))
 
 
 def evaluate_parameters(
-    dict_buffer: List[Dict[int, float]],
+    dict_buffer: list[dict[int, float]],
     epsilon: float,
     decaying_factor: float,
     n_macro_clusters: int,
     mu: int,
     n_samples_init: int,
-) -> Tuple[float, float, int]:
-    """
-    Fitness of one candidate (epsilon, decaying_factor): trains a fresh
-    DenStream on the buffer, groups its p-micro-clusters into macro-clusters
-    with the system's offline phase and returns (quality, complexity,
-    number of p-micro-clusters):
-
-      quality    = silhouette of the p-micro-cluster centres, labelled by
-                   their macro-cluster,
-      complexity = N_micro / |buffer| + 0.05 * ln(1 + N_micro / N_macro).
-
-    Degenerate candidates get penalty values: (-1, 1) with fewer than two
-    p-micro-clusters, (-0.5, 0.8) with too few to form the macro-clusters.
-    """
+) -> tuple[float, float, int]:
+    """Fitness of one candidate: (silhouette of the micro-cluster centres, complexity, number of micro-clusters)."""
     try:
         model = cluster.DenStream(
             epsilon=epsilon,
@@ -131,11 +109,11 @@ class NSGAIIOptimizer:
         crossover_eta: float = 15.0,
         mutation_rate: float = 0.2,
         mutation_eta: float = 20.0,
-        param_bounds: Optional[Dict[str, Tuple[float, float]]] = None,
+        param_bounds: dict[str, tuple[float, float]] | None = None,
         fixed_mu: int = 3,
         n_samples_init: int = 30,
         min_eval_buffer: int = 40,
-        seed: Optional[int] = None,
+        seed: int | None = None,
     ):
         self.n_macro_clusters = n_macro_clusters
         self.population_size = population_size
@@ -154,12 +132,8 @@ class NSGAIIOptimizer:
             "decaying_factor": (0.005, 0.08),
         }
         self.param_keys = list(self.param_bounds.keys())
-        self.xl = np.array(
-            [self.param_bounds[k][0] for k in self.param_keys], dtype=np.float64
-        )
-        self.xu = np.array(
-            [self.param_bounds[k][1] for k in self.param_keys], dtype=np.float64
-        )
+        self.xl = np.array([self.param_bounds[k][0] for k in self.param_keys], dtype=np.float64)
+        self.xu = np.array([self.param_bounds[k][1] for k in self.param_keys], dtype=np.float64)
 
     def _create_individual(self, x: np.ndarray, f: np.ndarray) -> Individual:
         eps = round(float(x[0]), 4)
@@ -168,7 +142,6 @@ class NSGAIIOptimizer:
             "epsilon": eps,
             "decaying_factor": decay,
             "mu": self.fixed_mu,
-            "offline_eps": float(getattr(config.denstream, "offline_eps", 0.40)),
         }
 
         quality_score = float(-f[0])
@@ -180,19 +153,16 @@ class NSGAIIOptimizer:
             complexity_score=complexity_score,
         )
 
-    def _get_fallback_params(
-        self, current_params: Optional[Dict[str, float]] = None
-    ) -> Dict[str, float]:
+    def _get_fallback_params(self, current_params: dict[str, float] | None = None) -> dict[str, float]:
         if current_params is not None:
             return dict(current_params)
         return {
             "epsilon": config.denstream.epsilon,
             "decaying_factor": config.denstream.decaying_factor,
             "mu": self.fixed_mu,
-            "offline_eps": config.denstream.offline_eps,
         }
 
-    def select_compromise_solution(self, pareto_front: List[Individual]) -> Individual:
+    def select_compromise_solution(self, pareto_front: list[Individual]) -> Individual:
         """Compromise solution: the pseudo-weight vector closest to equal
         weights for both objectives."""
         if len(pareto_front) == 0:
@@ -209,8 +179,8 @@ class NSGAIIOptimizer:
     def evolve(
         self,
         data_buffer: np.ndarray,
-        current_params: Optional[Dict[str, float]] = None,
-    ) -> Tuple[Individual, List[Individual], List[Dict[str, Any]]]:
+        current_params: dict[str, float] | None = None,
+    ) -> tuple[Individual, list[Individual], list[dict[str, Any]]]:
         """Runs NSGA-II on the buffer; returns the compromise, the Pareto front and the history."""
         t_start = time.perf_counter()
 
@@ -250,7 +220,7 @@ class NSGAIIOptimizer:
         t_end = time.perf_counter()
         opt_latency_ms = round((t_end - t_start) * 1000, 2)
 
-        pareto_front: List[Individual] = []
+        pareto_front: list[Individual] = []
         if res.X is not None and res.F is not None:
             X_arr = np.atleast_2d(res.X)
             F_arr = np.atleast_2d(res.F)
@@ -267,14 +237,8 @@ class NSGAIIOptimizer:
             {
                 "generation": self.generations,
                 "pareto_front_size": len(pareto_front),
-                "avg_quality": float(
-                    np.mean([ind.quality_score for ind in pareto_front])
-                )
-                if pareto_front
-                else 0.0,
-                "avg_complexity": float(
-                    np.mean([ind.complexity_score for ind in pareto_front])
-                )
+                "avg_quality": float(np.mean([ind.quality_score for ind in pareto_front])) if pareto_front else 0.0,
+                "avg_complexity": float(np.mean([ind.complexity_score for ind in pareto_front]))
                 if pareto_front
                 else 0.0,
                 "optimization_latency_ms": opt_latency_ms,

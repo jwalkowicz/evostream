@@ -1,7 +1,6 @@
 import json
 import signal
 from dataclasses import dataclass
-from typing import List, Optional
 
 import numpy as np
 
@@ -32,7 +31,7 @@ class ClusteringDaemon:
     def __init__(
         self,
         consumer,
-        storage: Optional[DBAdmin],
+        storage: DBAdmin | None,
         preprocessor: TextPreprocessor,
         encoder,
         projector: StreamProjector,
@@ -70,13 +69,11 @@ class ClusteringDaemon:
             n_samples_init=config.evolution.n_samples_init,
             min_eval_buffer=config.evolution.min_eval_buffer,
             seed=config.evolution.seed,
-            param_bounds={
-                k: tuple(v) for k, v in config.evolution.param_bounds.items()
-            },
+            param_bounds={k: tuple(v) for k, v in config.evolution.param_bounds.items()},
         )
 
-        self.warmup_buffer: List[np.ndarray] = []
-        self.swap_buffer: List[np.ndarray] = []
+        self.warmup_buffer: list[np.ndarray] = []
+        self.swap_buffer: list[np.ndarray] = []
         self.collecting_for_swap = False
         self.docs_processed = 0
         self.swap_count = 0
@@ -85,7 +82,7 @@ class ClusteringDaemon:
         logger.warning("Shutdown signal received. Stopping Daemon...")
         self.running = False
 
-    def _encode(self, texts: List[str]) -> np.ndarray:
+    def _encode(self, texts: list[str]) -> np.ndarray:
         return self.encoder.encode(
             texts,
             show_progress_bar=False,

@@ -69,7 +69,5 @@ y_noise = 0.5 + 0.05 * np.random.randn(len(t)) + 0.05 * np.sin(t / 2)
 axs[1, 2].plot(t, y_noise, color="black", linewidth=1)
 format_ax(axs[1, 2], "(f) Szum")
 
-plt.savefig(
-    "charts/chapter_1/concept_drift_types.pdf", bbox_inches="tight", format="pdf"
-)
+plt.savefig("charts/chapter_1/concept_drift_types.pdf", bbox_inches="tight", format="pdf")
 plt.show()

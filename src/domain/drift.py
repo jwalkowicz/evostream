@@ -1,5 +1,4 @@
 import collections
-from typing import Optional
 
 import numpy as np
 
@@ -7,13 +6,7 @@ from src.core.logger import logger
 
 
 class UnsupervisedDriftDetector:
-    """Unsupervised concept drift detector with two signals:
-
-    1. quality drop: the silhouette falls below both its recent baseline and
-       an absolute floor for several consecutive batches;
-    2. centroid shift: the macro-cluster centroids move further than a
-       threshold in the embedding space.
-    """
+    """Drift detector with two signals: a sustained silhouette drop and a shift of the macro-cluster centroids."""
 
     def __init__(
         self,
@@ -45,7 +38,7 @@ class UnsupervisedDriftDetector:
         self.total_drifts_detected = 0
         self.current_threshold = None
 
-    def update(self, current_silhouette: float, centroid_shift: Optional[float] = None) -> bool:
+    def update(self, current_silhouette: float, centroid_shift: float | None = None) -> bool:
         """Processes one batch; returns True if drift is detected."""
         self.total_steps_seen += 1
         self.steps_since_last_drift += 1
@@ -53,8 +46,7 @@ class UnsupervisedDriftDetector:
         is_drift = False
         drift_reasons = []
         can_trigger = (
-            self.total_steps_seen >= self.min_warmup_steps
-            and self.steps_since_last_drift >= self.cooldown_steps
+            self.total_steps_seen >= self.min_warmup_steps and self.steps_since_last_drift >= self.cooldown_steps
         )
 
         # The counter of consecutive drops is updated during the cooldown too.
@@ -78,7 +70,12 @@ class UnsupervisedDriftDetector:
                 )
 
         centroid_shift_ready = self.total_steps_seen >= self.centroid_shift_min_warmup_steps
-        if can_trigger and centroid_shift_ready and centroid_shift is not None and centroid_shift >= self.centroid_shift_threshold:
+        if (
+            can_trigger
+            and centroid_shift_ready
+            and centroid_shift is not None
+            and centroid_shift >= self.centroid_shift_threshold
+        ):
             is_drift = True
             drift_reasons.append(
                 f"Centroid shift ({centroid_shift:.3f} >= threshold: {self.centroid_shift_threshold:.3f})"
@@ -88,9 +85,7 @@ class UnsupervisedDriftDetector:
             self.total_drifts_detected += 1
             self.steps_since_last_drift = 0
             self._consecutive_quality_drops = 0
-            logger.warning(
-                f"Drift detected {self.total_drifts_detected}. Reason(s): {' | '.join(drift_reasons)}"
-            )
+            logger.warning(f"Drift detected {self.total_drifts_detected}. Reason(s): {' | '.join(drift_reasons)}")
 
         if current_silhouette is not None and current_silhouette > 0:
             self.history_quality.append(current_silhouette)

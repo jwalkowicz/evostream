@@ -1,7 +1,7 @@
 import collections
 import math
 import time
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 import numpy as np
 from river import cluster, stream
@@ -20,15 +20,8 @@ _RIVER_CALC_RADIUS = DenStreamMicroCluster.calc_radius
 
 
 def _rms_radius(self: DenStreamMicroCluster, timestamp: int) -> float:
-    """Micro-cluster radius as defined by Cao et al. (2006): the RMS distance
-    of the members from the centre, r^2 = sum_d(SS_d / w) - sum_d(LS_d / w)^2.
-
-    River computes the first term as ||SS||_2 / w instead of sum_d(SS_d) / w,
-    which underestimates the radius whenever the data spread over more than
-    one axis, down to 0 for unit-normalised text embeddings in high
-    dimensions (every point then passes the `radius <= epsilon` merge test).
-    See https://github.com/online-ml/river/issues/2004.
-    """
+    """Micro-cluster radius as defined by Cao et al. (2006); river's formula underestimates it
+    (https://github.com/online-ml/river/issues/2004)."""
     fading = self.fading_function(timestamp - self.last_edit_time)
     weight = self._weight(fading)
     mean_sq_norm = sum(fading * ss for ss in self.squared_sum.values()) / weight
@@ -46,7 +39,7 @@ def set_river_radius_fix(enabled: bool) -> None:
 set_river_radius_fix(config.denstream.fix_river_radius)
 
 
-def micro_cluster_centers(model: cluster.DenStream) -> Tuple[List[Any], np.ndarray]:
+def micro_cluster_centers(model: cluster.DenStream) -> tuple[list[Any], np.ndarray]:
     """Keys and centre vectors of the model's current p-micro-clusters."""
     t = getattr(model, "timestamp", 0)
     p_mcs = getattr(model, "p_micro_clusters", {})
@@ -59,21 +52,14 @@ def micro_cluster_centers(model: cluster.DenStream) -> Tuple[List[Any], np.ndarr
 
 
 def group_micro_clusters(centers: np.ndarray, n_macro_clusters: int) -> np.ndarray:
-    """Offline phase: groups p-micro-cluster centres into n_macro_clusters
-    macro-clusters (average-linkage agglomerative clustering, Euclidean
-    distance). Shared by the stream clusterer and by the NSGA-II fitness, so
-    candidates are scored with the same macro-clusters the system deploys.
-    With fewer centres than n_macro_clusters, each centre is its own group.
-    """
+    """Offline phase: average-linkage agglomerative grouping of p-micro-cluster centres into macro-clusters."""
     if len(centers) < n_macro_clusters:
         return np.arange(len(centers))
-    agg = AgglomerativeClustering(
-        n_clusters=n_macro_clusters, metric="euclidean", linkage="average"
-    )
+    agg = AgglomerativeClustering(n_clusters=n_macro_clusters, metric="euclidean", linkage="average")
     return agg.fit_predict(centers)
 
 
-def purity_score(y_true: List[Any], y_pred: List[int]) -> Optional[float]:
+def purity_score(y_true: list[Any], y_pred: list[int]) -> float | None:
     """Share of documents belonging to the dominant true category of their
     predicted cluster. Documents predicted as noise (-1) are left out."""
     if not y_true or not y_pred or len(y_true) != len(y_pred):
@@ -116,7 +102,6 @@ class StreamClusterer:
         self.window_true_labels = collections.deque(maxlen=window_size)
 
         self.n_samples_seen = 0
-        self.last_batch_noise_ratio = 0.0
 
         self.micro_to_macro = {}
         self.n_macro_clusters = 0
@@ -130,9 +115,7 @@ class StreamClusterer:
         labels = group_micro_clusters(centers, n_macro_clusters)
         self.micro_to_macro = {k: int(label) for k, label in zip(keys, labels)}
         self.n_macro_clusters = len(set(self.micro_to_macro.values()))
-        logger.info(
-            f"Offline phase: {len(keys)} p-micro-clusters grouped into {self.n_macro_clusters} macro-clusters"
-        )
+        logger.info(f"Offline phase: {len(keys)} p-micro-clusters grouped into {self.n_macro_clusters} macro-clusters")
 
     def predict_one(self, x: dict) -> int:
         """Macro-cluster of the nearest p-micro-cluster, or -1 if there are
@@ -154,13 +137,13 @@ class StreamClusterer:
 
         return self.micro_to_macro.get(best_mc, -1)
 
-    def _compute_macro_centroids(self) -> Dict[int, np.ndarray]:
+    def _compute_macro_centroids(self) -> dict[int, np.ndarray]:
         """Weighted mean of the p-micro-cluster centres of each macro-cluster."""
         t = getattr(self.model, "timestamp", 0)
         p_mcs = getattr(self.model, "p_micro_clusters", {})
 
-        weighted_sums: Dict[int, np.ndarray] = {}
-        weight_totals: Dict[int, float] = {}
+        weighted_sums: dict[int, np.ndarray] = {}
+        weight_totals: dict[int, float] = {}
         for mc_id, mc in p_mcs.items():
             macro_label = self.micro_to_macro.get(mc_id)
             if macro_label is None or macro_label == -1:
@@ -178,16 +161,11 @@ class StreamClusterer:
             weight_totals[macro_label] += w
 
         return {
-            label: weighted_sums[label] / weight_totals[label]
-            for label in weighted_sums
-            if weight_totals[label] > 0
+            label: weighted_sums[label] / weight_totals[label] for label in weighted_sums if weight_totals[label] > 0
         }
 
-    def get_centroid_shift(self) -> Optional[float]:
-        """Mean distance from each current macro-cluster centroid to the
-        nearest centroid from centroid_shift_lookback_batches ago (macro
-        labels are not stable between offline runs). None until there is
-        enough history."""
+    def get_centroid_shift(self) -> float | None:
+        """Mean distance from each macro-cluster centroid to the nearest centroid from a few batches ago."""
         lookback = self.centroid_shift_lookback_batches
         if len(self.centroid_history) <= lookback:
             return None
@@ -197,16 +175,15 @@ class StreamClusterer:
             return None
         ref_vecs = list(reference.values())
         distances = [
-            min(float(np.linalg.norm(cur_vec - ref_vec)) for ref_vec in ref_vecs)
-            for cur_vec in current.values()
+            min(float(np.linalg.norm(cur_vec - ref_vec)) for ref_vec in ref_vecs) for cur_vec in current.values()
         ]
         return float(np.mean(distances)) if distances else None
 
     def update(
         self,
-        embeddings: Union[np.ndarray, List[List[float]]],
-        labels: Optional[List[Union[str, int]]] = None,
-    ) -> List[int]:
+        embeddings: np.ndarray | list[list[float]],
+        labels: list[str | int] | None = None,
+    ) -> list[int]:
         """Learns a batch and returns its macro-cluster assignments."""
         if len(embeddings) == 0:
             return []
@@ -214,7 +191,6 @@ class StreamClusterer:
         embeddings_arr = np.asarray(embeddings, dtype=np.float32)
         start_time = time.perf_counter()
         batch_macro_preds = []
-        noise_count = 0
 
         for x, _ in stream.iter_array(embeddings_arr):
             self.model.learn_one(x)
@@ -224,10 +200,6 @@ class StreamClusterer:
 
         for i, (x, _) in enumerate(stream.iter_array(embeddings_arr)):
             macro_pred = self.predict_one(x)
-
-            if macro_pred == -1:
-                noise_count += 1
-
             batch_macro_preds.append(macro_pred)
 
             self.window_embeddings.append(embeddings_arr[i])
@@ -236,14 +208,11 @@ class StreamClusterer:
                 self.window_true_labels.append(labels[i])
 
         self.n_samples_seen += len(embeddings_arr)
-        self.last_batch_noise_ratio = noise_count / len(embeddings_arr)
         end_time = time.perf_counter()
-        self.last_batch_latency_ms = (
-            (end_time - start_time) / max(1, len(embeddings_arr))
-        ) * 1000.0
+        self.last_batch_latency_ms = ((end_time - start_time) / max(1, len(embeddings_arr))) * 1000.0
         return batch_macro_preds
 
-    def get_cluster_structures(self) -> Dict[str, Any]:
+    def get_cluster_structures(self) -> dict[str, Any]:
         """Current micro-clusters and their macro-cluster assignment, for plotting."""
         t = getattr(self.model, "timestamp", 0)
         p_mcs = getattr(self.model, "p_micro_clusters", {})
@@ -311,31 +280,22 @@ class StreamClusterer:
 
             if len(set(y_valid)) > 1:
                 try:
-                    metrics_dict["silhouette"] = round(
-                        float(silhouette_score(X_valid, y_valid)), 4
-                    )
+                    metrics_dict["silhouette"] = round(float(silhouette_score(X_valid, y_valid)), 4)
                 except Exception:
                     pass
 
-        if (
-            len(self.window_true_labels) == len(self.window_macro_preds)
-            and len(self.window_true_labels) >= 10
-        ):
+        if len(self.window_true_labels) == len(self.window_macro_preds) and len(self.window_true_labels) >= 10:
             y_true = list(self.window_true_labels)
             y_pred = list(self.window_macro_preds)
             purity = purity_score(y_true, y_pred)
             if purity is not None:
                 metrics_dict["purity"] = round(purity, 4)
             try:
-                metrics_dict["ari"] = round(
-                    float(adjusted_rand_score(y_true, y_pred)), 4
-                )
+                metrics_dict["ari"] = round(float(adjusted_rand_score(y_true, y_pred)), 4)
             except Exception:
                 pass
             try:
-                metrics_dict["nmi"] = round(
-                    float(normalized_mutual_info_score(y_true, y_pred)), 4
-                )
+                metrics_dict["nmi"] = round(float(normalized_mutual_info_score(y_true, y_pred)), 4)
             except Exception:
                 pass
 
@@ -348,7 +308,7 @@ class StreamClusterer:
         if current > target:
             self.model.decaying_factor = max(target, current * rate)
 
-    def warm_start(self, embeddings: Union[np.ndarray, List[List[float]]]) -> None:
+    def warm_start(self, embeddings: np.ndarray | list[list[float]]) -> None:
         """Trains the model on a buffer before it serves the stream, at the
         start of the stream and after every swap. The buffer is not scored."""
         for x, _ in stream.iter_array(np.asarray(embeddings, dtype=np.float32)):
@@ -359,15 +319,14 @@ class StreamClusterer:
         self.window_macro_preds.clear()
         self.window_true_labels.clear()
         self.n_samples_seen = 0
-        self.last_batch_noise_ratio = 0.0
         # Otherwise the swap itself would register as a centroid shift.
         self.centroid_history.clear()
         self.centroid_history.append(self._compute_macro_centroids())
 
     def hot_swap_model(
         self,
-        new_params: Dict[str, Any],
-        window_data: Union[np.ndarray, List[List[float]]],
+        new_params: dict[str, Any],
+        window_data: np.ndarray | list[list[float]],
     ):
         eps = float(new_params.get("epsilon", 0.10))
         mu = max(int(new_params.get("mu", 2)), 2)

@@ -45,9 +45,7 @@ def setup_command():
         ),
     ]
     table_prototypes = [
-        TablePrototype(
-            config.postgres.tables.results, schemas.CLUSTERING_RESULTS_SCHEMA
-        ),
+        TablePrototype(config.postgres.tables.results, schemas.CLUSTERING_RESULTS_SCHEMA),
         TablePrototype(config.postgres.tables.params, schemas.MODEL_PARAMETERS_SCHEMA),
     ]
 
@@ -65,16 +63,12 @@ def ingest_command(
     drift_type: str = typer.Option("sudden"),
 ):
     """Start the data ingestion process."""
-    typer.echo(
-        f"Starting ingestion (drift_type={drift_type}, drift_step={drift_step})..."
-    )
+    typer.echo(f"Starting ingestion (drift_type={drift_type}, drift_step={drift_step})...")
     producer = StreamProducer(bootstrap_servers=config.kafka.bootstrap_servers)
     prototype = IngesterPrototype(
         topic=config.kafka.topic.raw_messages,
         text_column=config.dataset.text_column,
-        label_column=config.kafka.event.text_column
-        if hasattr(config.kafka.event, "label_column")
-        else "label",
+        label_column=config.kafka.event.text_column if hasattr(config.kafka.event, "label_column") else "label",
         batch_size=batch_size,
         batch_interval=interval,
         drift_step=drift_step,

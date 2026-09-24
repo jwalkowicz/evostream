@@ -29,9 +29,7 @@ class StreamAdmin:
                 logger.success(f"Topic '{topic_name}' has been successfully created.")
             except KafkaException as e:
                 if e.args[0].code() == KafkaError.TOPIC_ALREADY_EXISTS:
-                    logger.info(
-                        f"Topic '{topic_name}' already exists. Skipping initialization."
-                    )
+                    logger.info(f"Topic '{topic_name}' already exists. Skipping initialization.")
                 else:
                     logger.error(f"Kafka failed to create topic '{topic_name}': {e}")
             except Exception as e:
@@ -64,9 +62,7 @@ class StreamProducer:
 class StreamConsumer:
     """Kafka consumer client for receiving messages."""
 
-    def __init__(
-        self, bootstrap_servers: str, group_id: str, topics: list, offset_reset: str
-    ):
+    def __init__(self, bootstrap_servers: str, group_id: str, topics: list, offset_reset: str):
         self.consumer = Consumer(
             {
                 "bootstrap.servers": bootstrap_servers,

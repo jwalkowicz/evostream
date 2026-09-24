@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from typing import List
 
 from src.core.logger import logger
 
@@ -24,7 +23,7 @@ class InfrastructureSetup:
         self.messaging_admin = messaging_admin
         self.storage_admin = storage_admin
 
-    def setup_messaging(self, topics: List[TopicPrototype]):
+    def setup_messaging(self, topics: list[TopicPrototype]):
         logger.info("Initializing messaging channels...")
         for topic in topics:
             self.messaging_admin.setup_topic(
@@ -33,7 +32,7 @@ class InfrastructureSetup:
                 replication_factor=topic.replication_factor,
             )
 
-    def setup_storage(self, tables: List[TablePrototype]):
+    def setup_storage(self, tables: list[TablePrototype]):
         logger.info("Initializing PostgreSQL schemas...")
         for table in tables:
             self.storage_admin.create_table(
@@ -43,8 +42,8 @@ class InfrastructureSetup:
 
     def run_all(
         self,
-        topic_prototypes: List[TopicPrototype],
-        table_prototypes: List[TablePrototype],
+        topic_prototypes: list[TopicPrototype],
+        table_prototypes: list[TablePrototype],
     ):
         self.setup_messaging(topic_prototypes)
         self.setup_storage(table_prototypes)

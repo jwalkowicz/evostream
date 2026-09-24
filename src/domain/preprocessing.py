@@ -1,6 +1,5 @@
 import re
 import string
-from typing import List, Optional
 
 import numpy as np
 from bs4 import BeautifulSoup
@@ -22,19 +21,16 @@ class TextPreprocessor:
         text = re.sub(r"\s+", " ", text).strip()
         return text
 
-    def clean_batch(self, texts: List[str]) -> List[str]:
+    def clean_batch(self, texts: list[str]) -> list[str]:
         return [self.clean(t) for t in texts]
 
 
 class StreamProjector:
-    """IPCA projection of SBERT embeddings, fitted on a buffer and then
-    frozen until the next model swap (refitting it continuously would rotate
-    the space under existing micro-clusters). Outputs are L2-normalised.
-    n_components=None passes the embeddings through unchanged."""
+    """IPCA projection of SBERT embeddings, frozen between model swaps; outputs are L2-normalised."""
 
-    def __init__(self, n_components: Optional[int]):
+    def __init__(self, n_components: int | None):
         self.n_components = n_components
-        self.ipca: Optional[IncrementalPCA] = None
+        self.ipca: IncrementalPCA | None = None
 
     @property
     def is_fitted(self) -> bool:

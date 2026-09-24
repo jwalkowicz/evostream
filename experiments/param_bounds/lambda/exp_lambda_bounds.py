@@ -1,19 +1,9 @@
-"""
-Search-space bounds for the decaying factor lambda (thesis section 3.4).
-
-A static clusterer (no drift detection) processes the validation stream,
-which switches topics after 3000 documents, for a grid of lambda values and
-several stream orders. For each lambda it records purity before and after
-the switch and how many of the p-micro-clusters alive at the switch survive
-500-3000 documents later. River advances its clock every stream_speed = 100
-documents, so the half-life of an unused micro-cluster is 100 / lambda
-documents.
-"""
+"""Search-space bounds for lambda on the validation stream, which switches topics after 3000 documents
+(thesis section 3.4). The half-life of an unused micro-cluster is 100 / lambda documents."""
 
 import argparse
 import itertools
 from concurrent.futures import ProcessPoolExecutor
-from typing import Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -23,8 +13,10 @@ from sklearn.preprocessing import normalize
 
 from experiments.param_bounds.common.validation_stream import (
     VALIDATION_PHASE1_CATEGORIES,
-    VALIDATION_SAMPLES_PER_PHASE as SAMPLES_PER_PHASE,
     load_validation_stream,
+)
+from experiments.param_bounds.common.validation_stream import (
+    VALIDATION_SAMPLES_PER_PHASE as SAMPLES_PER_PHASE,
 )
 from experiments.plot_style import use_polish_number_format
 from experiments.theses.thesis_1.exp_thesis_1_ipca import STREAM_SEEDS, shuffle_stream
@@ -49,7 +41,7 @@ def load_drift_stream(seed: int):
     return np.vstack([parts[0][0], parts[1][0]]), parts[0][1] + parts[1][1]
 
 
-def run_one(seed: int, decay: float) -> Tuple[dict, pd.DataFrame]:
+def run_one(seed: int, decay: float) -> tuple[dict, pd.DataFrame]:
     embeddings, labels = load_drift_stream(seed)
     ipca = IncrementalPCA(n_components=PCA_DIM).fit(embeddings[:INITIAL_WARMUP_SIZE])
     clusterer = StreamClusterer(
@@ -112,28 +104,8 @@ def run_one(seed: int, decay: float) -> Tuple[dict, pd.DataFrame]:
     return summary, ts
 
 
-def plot_quality(summary: pd.DataFrame, out_path: str):
-    use_polish_number_format()
-    plt.rcParams.update({"font.size": 11, "font.family": "serif"})
-    fig, ax = plt.subplots(figsize=(8, 5))
-    for col, label in [("purity_before_switch", "Czystość przed zmianą tematów"), ("purity_after_switch", "Czystość po zmianie tematów")]:
-        ax.errorbar(summary["decaying_factor"], summary[f"{col}_mean"], yerr=summary[f"{col}_std"], marker="o", capsize=4, lw=2, label=label)
-    for bound in config.evolution.param_bounds["decaying_factor"]:
-        ax.axvline(bound, color="grey", linestyle="--", lw=1)
-    ax.set_xscale("log")
-    ax.set_xlabel("Współczynnik wygaszania λ (skala logarytmiczna)")
-    ax.set_ylabel("Średnia czystość")
-    ax.grid(True, linestyle="--", alpha=0.6)
-    ax.legend(loc="best")
-    plt.savefig(out_path, dpi=300, bbox_inches="tight")
-    plt.close()
-
-
 def plot_purity_over_time(timeseries: pd.DataFrame, out_path: str):
-    """Purity of the static model over the stream for the two most extreme
-    lambda values (mean over stream orders): the drop at the topic switch
-    and the lack of recovery, whatever the speed of forgetting. Warm-up and
-    drift markers follow the thesis 2 figures."""
+    """Purity of the static model for the two extreme lambda values (thesis Figure 6)."""
     use_polish_number_format()
     plt.rcParams.update({"font.size": 11, "font.family": "serif"})
     fig, ax = plt.subplots(figsize=(8, 4.5))
@@ -144,10 +116,21 @@ def plot_purity_over_time(timeseries: pd.DataFrame, out_path: str):
     ]
     for decay, color, style, width in extremes:
         curve = timeseries[timeseries["decaying_factor"] == decay].groupby("samples_seen")["purity"].mean()
-        ax.plot(curve.index, curve.values, color=color, linestyle=style, lw=width,
-                label=f"λ = {str(decay).replace('.', ',')}")
-    ax.axvline(SAMPLES_PER_PHASE, color="#1a1a1a", linestyle=(0, (1, 1)), lw=1.8,
-               label=f"Zaplanowany dryf pojęć (t={SAMPLES_PER_PHASE})")
+        ax.plot(
+            curve.index,
+            curve.values,
+            color=color,
+            linestyle=style,
+            lw=width,
+            label=f"λ = {str(decay).replace('.', ',')}",
+        )
+    ax.axvline(
+        SAMPLES_PER_PHASE,
+        color="#1a1a1a",
+        linestyle=(0, (1, 1)),
+        lw=1.8,
+        label=f"Zaplanowany dryf pojęć (t={SAMPLES_PER_PHASE})",
+    )
     ax.set_xlabel("Liczba przetworzonych dokumentów")
     ax.set_ylabel("Czystość")
     ax.set_ylim(0, 1)
@@ -178,11 +161,17 @@ def main():
     runs.to_csv(f"{RESULTS_DIR}/lambda_bounds_runs.csv", index=False)
     timeseries.to_csv(f"{RESULTS_DIR}/lambda_bounds_timeseries.csv", index=False)
     summary.to_csv(f"{RESULTS_DIR}/lambda_bounds_summary.csv", index=False)
-    plot_quality(summary, f"{RESULTS_DIR}/lambda_bounds_quality.png")
     plot_purity_over_time(timeseries, f"{RESULTS_DIR}/lambda_bounds_purity_over_time.png")
 
-    cols = ["decaying_factor", "half_life_docs_mean", "purity_before_switch_mean", "purity_before_switch_std",
-            "purity_after_switch_mean", "purity_after_switch_std", "micro_clusters_mean"] + [f"old_alive_after_{d}_mean" for d in SURVIVAL_CHECKPOINTS]
+    cols = [
+        "decaying_factor",
+        "half_life_docs_mean",
+        "purity_before_switch_mean",
+        "purity_before_switch_std",
+        "purity_after_switch_mean",
+        "purity_after_switch_std",
+        "micro_clusters_mean",
+    ] + [f"old_alive_after_{d}_mean" for d in SURVIVAL_CHECKPOINTS]
     print(summary[cols].round(3).to_string(index=False))
 
 
