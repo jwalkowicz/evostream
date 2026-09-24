@@ -170,7 +170,6 @@ def plot_fronts(fronts: pd.DataFrame, out_path: str):
         comp = sub[sub["is_compromise"]]
         ax.scatter(comp["complexity"], comp["quality"], s=180, marker="*", color=line.get_color(), edgecolor="black", zorder=5)
     ax.scatter([], [], s=180, marker="*", color="white", edgecolor="black", label="rozwiązanie kompromisowe")
-    ax.set_title("Fronty Pareto: jakość vs złożoność")
     ax.set_xlabel("Złożoność strukturalna $f_2$")
     ax.set_ylabel("Jakość $f_1$ (wskaźnik sylwetki środków mikroklastrów)")
     ax.grid(True, linestyle="--", alpha=0.6)
@@ -185,7 +184,6 @@ def plot_compromise_quality(summary: pd.DataFrame, out_path: str):
         ax.errorbar(summary["pca_dim"], summary[f"{metric}_mean"], yerr=summary[f"{metric}_std"], marker="o", capsize=4, lw=2, label=label)
     _dimension_axis(ax, "Wartość miary")
     ax.set_ylim(0.0, 1.0)
-    ax.set_title("Jakość rozwiązania kompromisowego względem kategorii rzeczywistych")
     ax.legend(loc="best")
     plt.savefig(out_path, dpi=300, bbox_inches="tight")
     plt.close()
@@ -195,7 +193,6 @@ def plot_compromise_structure(summary: pd.DataFrame, out_path: str):
     fig, ax = plt.subplots(figsize=(8, 5))
     ax.errorbar(summary["pca_dim"], summary["micro_macro_ratio_mean"], yerr=summary["micro_macro_ratio_std"], marker="o", capsize=4, lw=2)
     _dimension_axis(ax, "$N_{micro} / N_{macro}$")
-    ax.set_title("Stosunek liczby mikroklastrów do makroklastrów w rozwiązaniu kompromisowym")
     plt.savefig(out_path, dpi=300, bbox_inches="tight")
     plt.close()
 
@@ -208,7 +205,6 @@ def plot_compromise_params(summary: pd.DataFrame, out_path: str):
         ax.set_ylim(*bounds[param])
         _dimension_axis(ax, label)
     axes[0].set_xlabel("")
-    axes[0].set_title("Parametry rozwiązania kompromisowego (zakres osi = przestrzeń poszukiwań)")
     plt.tight_layout()
     plt.savefig(out_path, dpi=300, bbox_inches="tight")
     plt.close()

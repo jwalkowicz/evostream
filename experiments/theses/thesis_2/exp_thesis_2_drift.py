@@ -82,24 +82,10 @@ INITIAL_WARMUP_SIZE = config.ml.ipca_warmup_size
 # default. Still overridable for isolated comparisons against the old value.
 HOTSWAP_BUFFER_SIZE = int(os.environ.get("HOTSWAP_BUFFER_SIZE", config.evolution.hotswap_buffer_size))
 
-# Warmup/pretraining strategy for both IPCA and DenStream:
-#   "sequential_prefix" (default): use the first INITIAL_WARMUP_SIZE
-#       documents of the stream, in order, to fit IPCA. DenStream is NOT
-#       pretrained at all - it sees these documents for the first time right
-#       when real per-batch tracking begins (start_batch skips ahead past
-#       them), so it's deployed with zero micro-clusters at t=INITIAL_WARMUP_SIZE.
-#   "random_sample_pretrain": randomly sample INITIAL_WARMUP_SIZE documents
-#       from anywhere in phase 1 (not just the first N) to fit IPCA AND to
-#       pretrain DenStream - fed through the same batch-by-batch update()
-#       calls real traffic uses (not one giant dump, which was tried first
-#       and made things worse: a single 300-point update() call produced 14
-#       small, immature micro-clusters at once and measurably hurt early
-#       purity/silhouette vs. no pretraining at all), just without
-#       recording/scoring those batches. The main loop then processes the
-#       ENTIRE sequential stream from document 0 - a few documents may have
-#       already been seen during the random pretraining sample, which a
-#       streaming model handles the same as any repeated exposure.
-WARMUP_STRATEGY = os.environ.get("WARMUP_STRATEGY", "sequential_prefix")
+# Warm-up: the first INITIAL_WARMUP_SIZE documents of the stream are used to
+# fit IPCA and to warm-start both DenStream models (StreamClusterer.warm_start,
+# the same procedure a swapped-in model goes through on its buffer); per-batch
+# scoring starts right after them.
 
 # Built after all env-var-driven settings above so a run under non-default
 # settings never overwrites the validated baseline sweep's result files.
@@ -108,8 +94,6 @@ if COOLDOWN_MODE != "asymmetric_own":
     RESULT_SUFFIX += f"__{COOLDOWN_MODE}"
 if HOTSWAP_BUFFER_SIZE != config.evolution.hotswap_buffer_size:
     RESULT_SUFFIX += f"__buf{HOTSWAP_BUFFER_SIZE}"
-if WARMUP_STRATEGY != "sequential_prefix":
-    RESULT_SUFFIX += f"__{WARMUP_STRATEGY}"
 
 # Sweep grid: 5 epsilon x 5 decay = 25 combinations, spanning the full
 # NSGA-II search space defined in config.evolution.param_bounds - epsilon
@@ -199,27 +183,9 @@ def run_drift_experiment(
 
     n_batches = len(vecs_abrupt_raw) // BATCH_SIZE
 
-    if WARMUP_STRATEGY == "random_sample_pretrain":
-        # A random sample spanning all of phase 1, not just whichever
-        # documents happen to be shuffled first, to fit IPCA and pretrain
-        # DenStream. The main loop then processes the entire sequential
-        # stream from document 0 - warmup no longer consumes a fixed prefix.
-        warmup_rng = np.random.default_rng(42)
-        warmup_indices = np.sort(
-            warmup_rng.choice(SAMPLES_PER_PHASE, size=INITIAL_WARMUP_SIZE, replace=False)
-        )
-        warmup_raw = vecs_abrupt_raw[warmup_indices]
-        warmup_labels = [labels_abrupt[i] for i in warmup_indices]
-        start_batch = 0
-        logger.info(
-            f"Randomly sampling {INITIAL_WARMUP_SIZE} documents from across phase 1 "
-            "to train initial IPCA..."
-        )
-    else:
-        warmup_raw = vecs_abrupt_raw[:INITIAL_WARMUP_SIZE]
-        warmup_labels = labels_abrupt[:INITIAL_WARMUP_SIZE]
-        start_batch = INITIAL_WARMUP_SIZE // BATCH_SIZE
-        logger.info(f"Sacrificing first {INITIAL_WARMUP_SIZE} documents to train initial IPCA...")
+    warmup_raw = vecs_abrupt_raw[:INITIAL_WARMUP_SIZE]
+    start_batch = INITIAL_WARMUP_SIZE // BATCH_SIZE
+    logger.info(f"Using the first {INITIAL_WARMUP_SIZE} documents to fit IPCA and warm-start DenStream...")
 
     ipca_static = IncrementalPCA(n_components=PCA_COMPONENTS)
     ipca_static.partial_fit(warmup_raw)
@@ -240,19 +206,9 @@ def run_drift_experiment(
     c_static = StreamClusterer(**common_kwargs)
     c_hotswap = StreamClusterer(**common_kwargs)
 
-    if WARMUP_STRATEGY == "random_sample_pretrain":
-        # Same batch-by-batch update() calls real traffic uses, not one
-        # giant dump (see WARMUP_STRATEGY docstring above for why that
-        # matters), just without recording/scoring these batches.
-        for i in range(0, len(warmup_raw), BATCH_SIZE):
-            chunk_raw = warmup_raw[i : i + BATCH_SIZE]
-            chunk_labels = warmup_labels[i : i + BATCH_SIZE]
-            c_static.update(normalize(ipca_static.transform(chunk_raw)), labels=chunk_labels)
-            c_hotswap.update(normalize(ipca_hotswap.transform(chunk_raw)), labels=chunk_labels)
-        logger.info(
-            f"Pretrained both DenStream instances on {len(warmup_raw)} randomly-sampled "
-            f"phase-1 documents, in {BATCH_SIZE}-doc chunks."
-        )
+    warmup_proj = normalize(ipca_static.transform(warmup_raw))
+    c_static.warm_start(warmup_proj)
+    c_hotswap.warm_start(warmup_proj)
 
     opt_hotswap = NSGAIIOptimizer(
         n_macro_clusters=n_expected_macro,

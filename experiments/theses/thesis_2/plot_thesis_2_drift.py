@@ -142,7 +142,6 @@ def _plot_detection_density(ax, dfs: Dict[Tuple[float, float], pd.DataFrame]):
 
 def plot_metric_band(
     dfs: Dict[Tuple[float, float], pd.DataFrame],
-    title: str,
     ylabel: str,
     static_col: Optional[str],
     hot_col: str,
@@ -195,7 +194,6 @@ def plot_metric_band(
     )
     ax.plot(x, hot_stack.mean(axis=1), color=HOTSWAP_COLOR, lw=2.4, zorder=4)
 
-    ax.set_title(title, fontweight="bold")
     ax.set_ylabel(ylabel)
 
     _plot_detection_density(ax_det, dfs)
@@ -259,7 +257,6 @@ def plot_convergence_heatmaps(dfs: Dict[Tuple[float, float], pd.DataFrame], tail
                     ax.text(j, i, fmt.format(val), ha="center", va="center", color=text_color, fontsize=9)
         fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
-    fig.suptitle("Zbieżność wyewoluowanych parametrów niezależnie od punktu startowego", fontweight="bold")
     plt.tight_layout()
     out_path = f"{RESULTS_DIR}/thesis_2_param_convergence_heatmap.png"
     plt.savefig(out_path, dpi=300, bbox_inches="tight")
@@ -281,9 +278,6 @@ def plot_trajectory_example(dfs: Dict[Tuple[float, float], pd.DataFrame], combo:
     axs[0].plot(df["sample_idx"], df["eps_adapted"], color="#2980b9", lw=2.2)
     axs[0].axhline(eps, color="#2980b9", ls=":", lw=1.4)
     axs[0].set_ylabel(r"Promień mikroklastra $\epsilon(t)$")
-    axs[0].set_title(
-        rf"Trajektoria samostrojenia dla startu $\epsilon_0={eps}$, $\lambda_0={decay}$", fontweight="bold"
-    )
 
     axs[1].plot(df["sample_idx"], df["decay_adapted"], color="#8e44ad", lw=2.2)
     axs[1].axhline(decay, color="#8e44ad", ls=":", lw=1.4)
@@ -296,8 +290,8 @@ def plot_trajectory_example(dfs: Dict[Tuple[float, float], pd.DataFrame], combo:
         Line2D([0], [0], color="#8e44ad", lw=2.2, label=r"Adaptacyjny $\lambda(t)$"),
         Line2D([0], [0], color="#8e44ad", ls=":", lw=1.4, label=rf"Start $\lambda_0={decay}$"),
     ]
-    fig.legend(handles=handles, loc="lower center", ncol=3, frameon=True, bbox_to_anchor=(0.5, -0.10))
-    plt.tight_layout(rect=[0, 0.12, 1, 1])
+    plt.tight_layout()
+    fig.legend(handles=handles, loc="upper center", ncol=3, frameon=True, bbox_to_anchor=(0.5, 0.0))
     out_path = f"{RESULTS_DIR}/thesis_2_trajectory_example.png"
     plt.savefig(out_path, dpi=300, bbox_inches="tight")
     plt.close()
@@ -330,11 +324,6 @@ def plot_summary_gain(dfs: Dict[Tuple[float, float], pd.DataFrame], tail_docs: i
     ax.set_ylabel(f"Purity po ustabilizowaniu\n(średnia ± odch. std. z {len(summary)} kombinacji)")
     ax.set_ylim(0, 1.05)
     ax.grid(True, axis="y", linestyle="--", alpha=0.4)
-    ax.set_title(
-        "Odporność na dobór parametrów startowych\n"
-        rf"(agregacja z {len(summary)} kombinacji $\epsilon_0 \times \lambda_0$)",
-        fontweight="bold",
-    )
     plt.tight_layout()
     out_path = f"{RESULTS_DIR}/thesis_2_summary_purity_gain.png"
     plt.savefig(out_path, dpi=300, bbox_inches="tight")
@@ -353,20 +342,16 @@ def main():
     # One normal-width chart per metric: mean + min-max band across all
     # loaded combos. These are the figures meant for the thesis document.
     plot_metric_band(
-        dfs, "Liczba aktywnych mikroklastrów w czasie",
-        "Liczba mikroklastrów", "static_micro", "hotswap_micro", "thesis_2_band_ghost_clusters.png",
+        dfs, "Liczba mikroklastrów", "static_micro", "hotswap_micro", "thesis_2_band_ghost_clusters.png",
     )
     plot_metric_band(
-        dfs, "Czystość klastrów (Purity) w czasie",
-        "Purity", "static_purity", "hotswap_purity", "thesis_2_band_purity.png", y_lim=(0.0, 1.05),
+        dfs, "Purity", "static_purity", "hotswap_purity", "thesis_2_band_purity.png", y_lim=(0.0, 1.05),
     )
     plot_metric_band(
-        dfs, "Jakość klastrowania (Silhouette) w czasie",
-        "Silhouette", "static_silhouette", "hotswap_silhouette", "thesis_2_band_silhouette.png", y_lim=(-0.1, 0.3),
+        dfs, "Silhouette", "static_silhouette", "hotswap_silhouette", "thesis_2_band_silhouette.png", y_lim=(-0.1, 0.3),
     )
     plot_metric_band(
-        dfs, "Sygnał detektora dryfu: przesunięcie centroidów makroklastrów",
-        "Przesunięcie centroidu (odl. euklidesowa)", None, "centroid_shift", "thesis_2_band_centroid_shift.png",
+        dfs, "Przesunięcie centroidu (odl. euklidesowa)", None, "centroid_shift", "thesis_2_band_centroid_shift.png",
         threshold=config.drift.centroid_shift_threshold,
     )
 

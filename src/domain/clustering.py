@@ -381,6 +381,31 @@ class StreamClusterer:
         if current > target:
             self.model.decaying_factor = max(target, current * rate)
 
+    def warm_start(self, embeddings: Union[np.ndarray, List[List[float]]]) -> None:
+        """
+        Trains the current model on a buffer of documents before it starts
+        serving the stream: the documents are absorbed by DenStream, the
+        micro-clusters are grouped into macro-clusters, and the evaluation
+        state (window, centroid history) starts empty, so nothing from the
+        buffer is scored. Used both at the start of a stream (on the IPCA
+        warm-up documents) and after a model swap (on the swap buffer), so a
+        model always starts the same way.
+        """
+        for x, _ in stream.iter_array(np.asarray(embeddings, dtype=np.float32)):
+            self.model.learn_one(x)
+        self._cluster_offline(n_macro_clusters=self.expected_macro_clusters)
+
+        self.window_embeddings.clear()
+        self.window_macro_preds.clear()
+        self.window_true_labels.clear()
+        self.n_samples_seen = 0
+        self.last_batch_noise_ratio = 0.0
+        # Centroid shift is measured against the model's own history only -
+        # after a swap, comparing with the old model's centroids would read as
+        # a huge, spurious "shift" caused by the swap itself.
+        self.centroid_history.clear()
+        self.centroid_history.append(self._compute_macro_centroids())
+
     def hot_swap_model(
         self,
         new_params: Dict[str, Any],
@@ -390,39 +415,18 @@ class StreamClusterer:
         mu = max(int(new_params.get("mu", 2)), 2)
         decay = float(new_params.get("decaying_factor", 0.005))
 
-        window_arr = np.asarray(window_data, dtype=np.float32)
-
-        new_model = cluster.DenStream(
+        self.model = cluster.DenStream(
             epsilon=eps,
             mu=mu,
             decaying_factor=decay,
             beta=0.75,
             n_samples_init=1,
         )
-
-        for x, _ in stream.iter_array(window_arr):
-            new_model.learn_one(x)
-
-        self.model = new_model
-        self._cluster_offline(n_macro_clusters=self.expected_macro_clusters)
-
-        for x, _ in stream.iter_array(window_arr):
-            self.predict_one(x)
-
-        self.window_embeddings.clear()
-        self.window_macro_preds.clear()
-        self.window_true_labels.clear()
-        self.n_samples_seen = 0
-        self.last_batch_noise_ratio = 0.0
-        # A fresh model's centroids have nothing to do with the old model's -
-        # comparing across the swap would read as a huge, spurious "shift"
-        # caused by the swap itself, not by new incoming data.
-        self.centroid_history.clear()
-        self.centroid_history.append(self._compute_macro_centroids())
+        self.warm_start(window_data)
 
         logger.info(
             f"Model Hot-Swapped with fresh window-trained instance: "
             f"epsilon={eps}, mu={mu}, decay={decay} | "
-            f"Active Micro-Clusters: {len(new_model.p_micro_clusters)}, "
+            f"Active Micro-Clusters: {len(self.model.p_micro_clusters)}, "
             f"Macro-Clusters: {self.n_macro_clusters}"
         )

@@ -49,7 +49,7 @@ def distance_contrast_ratio(X: np.ndarray) -> float:
     return float((d.max() - d.min()) / d.mean())
 
 
-def plot_curve(dims, values, ylabel, title, out_path):
+def plot_curve(dims, values, ylabel, out_path):
     plt.rcParams.update({"font.size": 11, "font.family": "serif"})
     fig, ax = plt.subplots(figsize=(8, 5))
     ax.plot(dims, values, color="#2980b9", linewidth=2.5, marker="o")
@@ -57,7 +57,6 @@ def plot_curve(dims, values, ylabel, title, out_path):
     ax.set_xscale("log", base=2)
     ax.set_xticks(dims)
     ax.set_xticklabels(dims)
-    ax.set_title(title)
     ax.set_xlabel("Wymiarowość przestrzeni (skala logarytmiczna)")
     ax.set_ylabel(ylabel)
     ax.grid(True, linestyle="--", alpha=0.6)
@@ -103,12 +102,10 @@ def main():
 
     plot_curve(
         DIMS, df["explained_variance_pct"], "Skumulowana wariancja wyjaśniona [%]",
-        "Skumulowana wariancja wyjaśniona przez składowe główne",
         f"{RESULTS_DIR}/dimensionality_variance.png",
     )
     plot_curve(
         DIMS, df["dcr"], "Współczynnik kontrastu odległości (DCR)",
-        "Kontrast odległości w funkcji wymiarowości",
         f"{RESULTS_DIR}/dimensionality_dcr.png",
     )
 

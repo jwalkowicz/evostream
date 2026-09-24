@@ -107,15 +107,12 @@ encoder, data_a, data_b, data_c = load_encoder_and_data()
 N_MACRO_CLUSTERS = len(config.dataset.categories_concept_a)
 
 
-def create_projector() -> StreamProjector:
-    """IPCA fitted once on the first documents of concept A and then frozen,
-    as in the thesis experiments; it is re-fitted only on a model swap."""
-    projector = StreamProjector(n_components=config.ml.pca_components_num)
+def encode_warmup_documents() -> np.ndarray:
+    """SBERT embeddings of the warm-up documents: the first documents of
+    concept A, used to fit IPCA and warm-start DenStream as in the thesis
+    experiments. Streaming then continues right after them."""
     warmup_texts = [item[0] for item in data_a[: config.ml.ipca_warmup_size]]
-    projector.fit(
-        encoder.encode(warmup_texts, normalize_embeddings=True, convert_to_numpy=True)
-    )
-    return projector
+    return encoder.encode(warmup_texts, normalize_embeddings=True, convert_to_numpy=True)
 
 
 def create_clusterer() -> StreamClusterer:
@@ -161,14 +158,17 @@ def create_optimizer() -> NSGAIIOptimizer:
 
 
 def reset_session_state():
+    warmup = encode_warmup_documents()
+    st.session_state.projector = StreamProjector(n_components=config.ml.pca_components_num)
+    st.session_state.projector.fit(warmup)
     st.session_state.clusterer = create_clusterer()
+    st.session_state.clusterer.warm_start(st.session_state.projector.transform(warmup))
     st.session_state.drift_detector = create_detector()
     st.session_state.optimizer = create_optimizer()
-    st.session_state.projector = create_projector()
 
     st.session_state.current_concept = "A"
     st.session_state.is_streaming = False
-    st.session_state.stream_idx_a = 0
+    st.session_state.stream_idx_a = config.ml.ipca_warmup_size
     st.session_state.stream_idx_b = 0
     st.session_state.stream_idx_c = 0
     st.session_state.total_docs_processed = 0

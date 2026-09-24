@@ -72,6 +72,7 @@ def run_one(seed: int, decay: float) -> Tuple[dict, pd.DataFrame]:
         window_size=config.denstream.window_size,
         expected_macro_clusters=len(VALIDATION_PHASE1_CATEGORIES),
     )
+    clusterer.warm_start(normalize(ipca.transform(embeddings[:INITIAL_WARMUP_SIZE])))
 
     records = []
     # River replaces a micro-cluster with an updated copy whenever it absorbs
@@ -134,7 +135,6 @@ def plot_quality(summary: pd.DataFrame, out_path: str):
     ax.set_xscale("log")
     ax.set_xlabel("Współczynnik wygaszania λ (skala logarytmiczna)")
     ax.set_ylabel("Średnia czystość")
-    ax.set_title("Wpływ λ na jakość grupowania (model statyczny, ε = %.2f)" % config.denstream.epsilon)
     ax.grid(True, linestyle="--", alpha=0.6)
     ax.legend(loc="best")
     plt.savefig(out_path, dpi=300, bbox_inches="tight")
@@ -144,25 +144,27 @@ def plot_quality(summary: pd.DataFrame, out_path: str):
 def plot_purity_over_time(timeseries: pd.DataFrame, out_path: str):
     """Purity of the static model over the stream for the two most extreme
     lambda values (mean over stream orders): the drop at the topic switch
-    and the lack of recovery, whatever the speed of forgetting."""
+    and the lack of recovery, whatever the speed of forgetting. Warm-up and
+    drift markers follow the thesis 2 figures."""
     plt.rcParams.update({"font.size": 11, "font.family": "serif"})
     fig, ax = plt.subplots(figsize=(8, 4.5))
+    ax.axvspan(0, INITIAL_WARMUP_SIZE, color="#b2ebf2", alpha=0.9, zorder=0, label="Rozgrzewka IPCA")
     extremes = [
         (min(LAMBDA_GRID), "#2980b9", "-", 3.0),
         (max(LAMBDA_GRID), "#e67e22", "--", 2.0),
     ]
     for decay, color, style, width in extremes:
         curve = timeseries[timeseries["decaying_factor"] == decay].groupby("samples_seen")["purity"].mean()
-        half_life_docs = f"{round(100 / decay):,}".replace(",", " ")  # e.g. "100 000"
         ax.plot(curve.index, curve.values, color=color, linestyle=style, lw=width,
-                label=f"λ = {str(decay).replace('.', ',')} (połowa wagi po {half_life_docs} dokumentach)")
-    ax.axvline(SAMPLES_PER_PHASE, color="black", linestyle=":", lw=2, label="Zmiana tematów")
+                label=f"λ = {str(decay).replace('.', ',')}")
+    ax.axvline(SAMPLES_PER_PHASE, color="#1a1a1a", linestyle=(0, (1, 1)), lw=1.8,
+               label=f"Zaplanowany dryf pojęć (t={SAMPLES_PER_PHASE})")
     ax.set_xlabel("Liczba przetworzonych dokumentów")
     ax.set_ylabel("Czystość")
     ax.set_ylim(0, 1)
-    ax.set_xlim(timeseries["samples_seen"].min(), timeseries["samples_seen"].max())
+    ax.set_xlim(0, timeseries["samples_seen"].max())
     ax.grid(True, linestyle="--", alpha=0.6)
-    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.18), ncol=1, frameon=False)
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.18), ncol=2, frameon=False)
     plt.savefig(out_path, dpi=300, bbox_inches="tight")
     plt.close()
 

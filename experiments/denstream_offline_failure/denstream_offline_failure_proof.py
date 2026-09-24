@@ -5,7 +5,8 @@ phase (DBSCAN over p-micro-cluster centres, merging two centres closer than
 
 Runs river's DenStream with the system's settings on the thesis stream (the
 same 5000 documents, IPCA fitted on the first documents and frozen, batches
-as in the thesis experiments) and records, after each batch, the number of
+as in the thesis experiments, with DenStream warm-started on the same
+warm-up documents) and records, after each batch, the number of
 p-micro-clusters, the number of macro-clusters produced by river's native
 offline phase, and the distances between p-micro-cluster centres compared
 with the 2 * epsilon merge threshold.
@@ -38,6 +39,8 @@ def main():
         decaying_factor=config.denstream.decaying_factor,
         n_samples_init=config.denstream.n_samples_init,
     )
+    for x, _ in stream.iter_array(normalize(ipca.transform(embeddings[:INITIAL_WARMUP_SIZE]))):
+        model.learn_one(x)
 
     records = []
     for start in range(INITIAL_WARMUP_SIZE, len(embeddings), BATCH_SIZE):

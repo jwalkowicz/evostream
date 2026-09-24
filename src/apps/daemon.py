@@ -101,12 +101,15 @@ class ClusteringDaemon:
         )
 
     def _collect_warmup(self, embeddings: np.ndarray) -> None:
-        """Buffers the first documents and fits IPCA once there are enough.
-        As in the experiments, these documents are not clustered."""
+        """Buffers the first documents; once there are enough, fits IPCA on
+        them and warm-starts DenStream on them - the same procedure as after a
+        model swap. As in the experiments, these documents are not scored."""
         self.warmup_buffer.extend(embeddings)
         if len(self.warmup_buffer) >= config.ml.ipca_warmup_size:
-            self.projector.fit(np.array(self.warmup_buffer))
-            logger.info(f"IPCA fitted on {len(self.warmup_buffer)} warm-up documents.")
+            warmup = np.array(self.warmup_buffer)
+            self.projector.fit(warmup)
+            self.clusterer.warm_start(self.projector.transform(warmup))
+            logger.info(f"IPCA fitted and DenStream warm-started on {len(warmup)} documents.")
             self.warmup_buffer = []
 
     def _swap_model(self) -> None:

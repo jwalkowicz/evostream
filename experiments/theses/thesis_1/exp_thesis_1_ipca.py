@@ -90,8 +90,9 @@ def run_streaming_simulation(
 ) -> pd.DataFrame:
     """Streams the documents through (IPCA ->) DenStream batch by batch.
 
-    IPCA is fitted once on the first INITIAL_WARMUP_SIZE documents and then
-    frozen, as in thesis 2. Those warmup documents are not clustered or
+    The first INITIAL_WARMUP_SIZE documents form the warm-up buffer: IPCA is
+    fitted on them once and then frozen, and DenStream is warm-started on
+    them - the same procedure as after a model swap in thesis 2. They are not
     scored. Latency covers only the per-batch stream work (projection +
     clustering); the one-off IPCA fit is reported separately. The decaying
     factor defaults to the config value.
@@ -116,6 +117,8 @@ def run_streaming_simulation(
         window_size=config.denstream.window_size,
         expected_macro_clusters=n_categories,
     )
+    warmup = embeddings[:INITIAL_WARMUP_SIZE]
+    clusterer.warm_start(normalize(ipca.transform(warmup)) if ipca is not None else warmup)
 
     records = []
     for start in range(INITIAL_WARMUP_SIZE, len(embeddings), BATCH_SIZE):
@@ -223,7 +226,6 @@ def plot_best_purity(timeseries: pd.DataFrame, summary: pd.DataFrame, out_path: 
             lw=2.0,
         )
 
-    ax.set_title("Czystość klastrów tematycznych (najlepsze ε, średnia z kolejności strumienia)")
     ax.set_xlabel("Liczba przetworzonych dokumentów")
     ax.set_ylabel("Czystość")
     ax.set_ylim(0.0, 1.0)
