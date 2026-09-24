@@ -207,31 +207,48 @@ def summarize(timeseries: pd.DataFrame, sbert_ms: float) -> pd.DataFrame:
     return summary.sort_values(["pca_dim", "epsilon"], ascending=[False, True])
 
 
-def plot_best_purity(timeseries: pd.DataFrame, summary: pd.DataFrame, out_path: str):
+def plot_purity_band(timeseries: pd.DataFrame, summary: pd.DataFrame, out_path: str):
+    """Purity over the stream, one panel per dimension: the line is the best
+    epsilon, the band the min-max range over the whole epsilon grid (each
+    curve averaged over stream orders), so the figure also shows how
+    sensitive every dimension is to epsilon and where the model collapses."""
     plt.rcParams.update({"font.size": 11, "font.family": "serif"})
-    fig, ax = plt.subplots(figsize=(10, 6))
+    dims = sorted(timeseries["pca_dim"].unique(), reverse=True)
+    fig, axes = plt.subplots(2, 3, figsize=(12, 6.5), sharex=True, sharey=True)
+    best_eps = summary[summary["is_best_epsilon"]].set_index("pca_dim")["epsilon"]
+    grid = "; ".join(f"{e:.2f}".replace(".", ",") for e in EPSILON_GRID)
 
-    best = summary[summary["is_best_epsilon"]]
-    for _, row in best.iterrows():
-        sub = timeseries[
-            (timeseries["pca_dim"] == row["pca_dim"])
-            & (timeseries["epsilon"] == row["epsilon"])
-        ]
-        name = "Pełne SBERT (384d)" if row["pca_dim"] == 384 else f"IPCA (d={row['pca_dim']})"
-        mean_over_seeds = sub.groupby("samples_seen")["purity"].mean()
-        ax.plot(
-            mean_over_seeds.index,
-            mean_over_seeds.ewm(span=5).mean(),
-            label=f"{name}, ε={row['epsilon']}",
-            lw=2.0,
+    for ax, dim in zip(axes.flat, dims):
+        curves = (
+            timeseries[timeseries["pca_dim"] == dim]
+            .groupby(["epsilon", "samples_seen"])["purity"].mean()
+            .unstack("epsilon")
+            .ewm(span=5).mean()
         )
+        ax.axvspan(0, INITIAL_WARMUP_SIZE, color="#b2ebf2", alpha=0.9, zorder=0,
+                   label="Rozgrzewka (IPCA i DenStream)")
+        ax.fill_between(curves.index, curves.min(axis=1), curves.max(axis=1), color="#2980b9",
+                        alpha=0.25, lw=0, label=f"Zakres dla ε ∈ {{{grid}}}")
+        ax.plot(curves.index, curves[best_eps[dim]], color="#2980b9", lw=2,
+                label="Najlepsze ε (średnia z 3 permutacji)")
+        name = "d = 384 (bez IPCA)" if dim == 384 else f"d = {dim}"
+        # Every epsilon gives the same purity when the model degenerates to a
+        # single micro-cluster, so no epsilon is "best" there.
+        same_for_all = summary.loc[summary["pca_dim"] == dim, "mean_purity"].nunique() == 1
+        eps_label = "ε dowolne" if same_for_all else f"najlepsze ε = {best_eps[dim]:.2f}".replace(".", ",")
+        ax.set_title(f"{name}, {eps_label}", fontsize=11)
+        ax.set_ylim(0.0, 1.0)
+        ax.set_xlim(0, timeseries["samples_seen"].max())
+        ax.grid(True, linestyle="--", alpha=0.6)
 
-    ax.set_xlabel("Liczba przetworzonych dokumentów")
-    ax.set_ylabel("Czystość")
-    ax.set_ylim(0.0, 1.0)
-    ax.grid(True, linestyle="--", alpha=0.6)
-    ax.legend(loc="lower right")
-    plt.savefig(out_path, format="pdf", bbox_inches="tight")
+    for ax in axes[1]:
+        ax.set_xlabel("Liczba przetworzonych dokumentów")
+    for ax in axes[:, 0]:
+        ax.set_ylabel("Czystość")
+    handles, labels = axes.flat[0].get_legend_handles_labels()
+    plt.tight_layout()
+    fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.0), ncol=3, frameon=False)
+    plt.savefig(out_path, bbox_inches="tight", dpi=300)
     plt.close()
 
 
@@ -270,7 +287,7 @@ def main():
     suffix = f"radius_{args.radius}"
     timeseries.to_csv(f"{RESULTS_DIR}/thesis_1_timeseries_{suffix}.csv", index=False)
     summary.to_csv(f"{RESULTS_DIR}/thesis_1_summary_{suffix}.csv", index=False)
-    plot_best_purity(timeseries, summary, f"{RESULTS_DIR}/thesis_1_purity_{suffix}.pdf")
+    plot_purity_band(timeseries, summary, f"{RESULTS_DIR}/thesis_1_purity_{suffix}.png")
 
     print(summary[summary["is_best_epsilon"]].to_string(index=False))
 
