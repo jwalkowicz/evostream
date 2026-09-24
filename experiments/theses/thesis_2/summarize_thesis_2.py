@@ -45,8 +45,9 @@ def summarize_run(df):
     for start, end in SEGMENTS:
         row[f"static_{start + 1}_{end}"] = segment_mean(df, "static_purity", start, end)
         row[f"adaptive_{start + 1}_{end}"] = segment_mean(df, "hotswap_purity", start, end)
-    row["static_silhouette_9001_10000"] = segment_mean(df, "static_silhouette", 9000, 10000)
-    row["adaptive_silhouette_9001_10000"] = segment_mean(df, "hotswap_silhouette", 9000, 10000)
+    for start, end in [(6000, 10000), (6000, 9000), (9000, 10000)]:
+        row[f"static_silhouette_{start + 1}_{end}"] = segment_mean(df, "static_silhouette", start, end)
+        row[f"adaptive_silhouette_{start + 1}_{end}"] = segment_mean(df, "hotswap_silhouette", start, end)
     return row
 
 
@@ -81,8 +82,10 @@ def main():
         s, a = table[f"static_{start + 1}_{end}"], table[f"adaptive_{start + 1}_{end}"]
         print(f"  {start + 1:>5}-{end:<5}  static {s.mean():.3f} ± {s.std():.3f} | "
               f"adaptive {a.mean():.3f} ± {a.std():.3f} | adaptive better in {(a > s).sum()}/{len(table)}")
-    s, a = table.static_silhouette_9001_10000, table.adaptive_silhouette_9001_10000
-    print(f"  silhouette 9001-10000  static {s.mean():.3f} | adaptive {a.mean():.3f}")
+    print("Silhouette (mean over runs):")
+    for start, end in [(6000, 10000), (6000, 9000), (9000, 10000)]:
+        s, a = table[f"static_silhouette_{start + 1}_{end}"], table[f"adaptive_silhouette_{start + 1}_{end}"]
+        print(f"  {start + 1:>5}-{end:<5}  static {s.mean():.3f} | adaptive {a.mean():.3f}")
 
     print("\nTable 5 - results per starting epsilon (identical for every starting lambda):")
     per_eps = table.groupby("eps")[["static_9001_10000", "adaptive_9001_10000", "first_alarm_delay", "final_eps"]].mean()
