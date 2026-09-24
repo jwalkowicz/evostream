@@ -98,7 +98,7 @@ def _style_axis(ax):
 
 def _base_legend_handles() -> List:
     return [
-        mpatches.Patch(facecolor=WARMUP_COLOR, label="Rozgrzewka IPCA"),
+        mpatches.Patch(facecolor=WARMUP_COLOR, label="Rozgrzewka (IPCA i DenStream)"),
         Line2D([0], [0], color=DRIFT_LINE_COLOR, ls=(0, (1, 1)), lw=1.8, label=f"Zaplanowany dryf pojęć (t={DRIFT_POINT})"),
     ]
 

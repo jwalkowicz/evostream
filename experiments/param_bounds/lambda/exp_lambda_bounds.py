@@ -148,7 +148,7 @@ def plot_purity_over_time(timeseries: pd.DataFrame, out_path: str):
     drift markers follow the thesis 2 figures."""
     plt.rcParams.update({"font.size": 11, "font.family": "serif"})
     fig, ax = plt.subplots(figsize=(8, 4.5))
-    ax.axvspan(0, INITIAL_WARMUP_SIZE, color="#b2ebf2", alpha=0.9, zorder=0, label="Rozgrzewka IPCA")
+    ax.axvspan(0, INITIAL_WARMUP_SIZE, color="#b2ebf2", alpha=0.9, zorder=0, label="Rozgrzewka (IPCA i DenStream)")
     extremes = [
         (min(LAMBDA_GRID), "#2980b9", "-", 3.0),
         (max(LAMBDA_GRID), "#e67e22", "--", 2.0),
