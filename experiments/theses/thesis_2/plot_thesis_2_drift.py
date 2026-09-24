@@ -321,7 +321,7 @@ def plot_summary_gain(dfs: Dict[Tuple[float, float], pd.DataFrame], tail_docs: i
     ax.bar(x, means, yerr=stds, capsize=6, color=colors, width=0.55)
     ax.set_xticks(x)
     ax.set_xticklabels(labels)
-    ax.set_ylabel(f"Purity po ustabilizowaniu\n(średnia ± odch. std. z {len(summary)} kombinacji)")
+    ax.set_ylabel(f"Czystość po ustabilizowaniu\n(średnia ± odch. std. z {len(summary)} kombinacji)")
     ax.set_ylim(0, 1.05)
     ax.grid(True, axis="y", linestyle="--", alpha=0.4)
     plt.tight_layout()
@@ -345,10 +345,10 @@ def main():
         dfs, "Liczba mikroklastrów", "static_micro", "hotswap_micro", "thesis_2_band_ghost_clusters.png",
     )
     plot_metric_band(
-        dfs, "Purity", "static_purity", "hotswap_purity", "thesis_2_band_purity.png", y_lim=(0.0, 1.05),
+        dfs, "Czystość", "static_purity", "hotswap_purity", "thesis_2_band_purity.png", y_lim=(0.0, 1.05),
     )
     plot_metric_band(
-        dfs, "Silhouette", "static_silhouette", "hotswap_silhouette", "thesis_2_band_silhouette.png", y_lim=(-0.1, 0.3),
+        dfs, "Wskaźnik sylwetki", "static_silhouette", "hotswap_silhouette", "thesis_2_band_silhouette.png", y_lim=(-0.1, 0.3),
     )
     plot_metric_band(
         dfs, "Przesunięcie centroidu (odl. euklidesowa)", None, "centroid_shift", "thesis_2_band_centroid_shift.png",
