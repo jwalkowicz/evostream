@@ -32,26 +32,8 @@ RESULTS_DIR = "experiments/theses/thesis_2/results"
 DATASET_CACHE_PATH = f"{RESULTS_DIR}/cached_dataset.pkl"
 EMBEDDINGS_CACHE_PATH = f"{RESULTS_DIR}/cached_embeddings.npy"
 
-# Post-swap decay cooldown-easing behavior. Three variants under test:
-#   "asymmetric_own" (baseline/default): ease decay back down toward THIS
-#       RUN's own initial_decay, only when the evolved value is above it.
-#       Never eases back up when the evolved value is already below it.
-#       Only makes sense if initial_decay represents a sensible target - for
-#       sweep combos where initial_decay is a deliberate stress-test value
-#       (e.g. 0.08), "return to it" isn't a meaningful goal.
-#   "none": don't ease at all - let NSGA-II's evolved decay stand until the
-#       next swap. Doesn't second-guess the optimizer with an arbitrary target.
-#   "anchor_default": ease toward config.denstream.decaying_factor (the
-#       fixed practitioner baseline) instead of each combo's own sweep
-#       starting point, so "cooldown" always means "return to a sensible
-#       value," even for combos that deliberately started elsewhere.
-# Set via env var so the same code can be re-run under each variant without
-# hand-editing, and each variant's results are written to separate files
-# (see RESULT_SUFFIX below) so the validated baseline sweep is never overwritten.
-COOLDOWN_MODE = os.environ.get("COOLDOWN_MODE", "asymmetric_own")
-
-# 6 categories per phase: a semantically disjoint topic set switches in at
-# DRIFT_POINT, simulating an abrupt concept drift.
+# Two disjoint sets of six categories; the stream switches from the first
+# to the second after SAMPLES_PER_PHASE documents.
 PHASE1_CATEGORIES = [
     "sci.space", "sci.med", "rec.autos",
     "sci.electronics", "comp.graphics", "sci.crypt",
@@ -63,46 +45,14 @@ PHASE2_CATEGORIES = [
 SAMPLES_PER_PHASE = 5000
 DRIFT_POINT = SAMPLES_PER_PHASE
 BATCH_SIZE = config.ml.batch_size
-# Two separate buffer sizes that used to share one constant:
-# - INITIAL_WARMUP_SIZE: documents sacrificed at stream start to fit the
-#   first IPCA, before either model starts clustering at all.
-# - HOTSWAP_BUFFER_SIZE: documents collected after a drift detection before
-#   the new IPCA + DenStream can be retrained. Larger means a more
-#   representative retrain sample (less overfit to one narrow slice of
-#   post-drift content) but also a longer detection-to-deployment lag where
-#   the OLD model keeps running, and slower NSGA-II evaluation (each of its
-#   384 evaluations re-fits DenStream over the whole buffer). Kept separate
-#   so tuning one doesn't also change the unrelated initial cold-start.
 INITIAL_WARMUP_SIZE = config.ml.ipca_warmup_size
-# Validated: buf=500 vs the original buf=300 gave identical pre-swap behavior
-# (buffer size doesn't affect anything before the first swap) but, once
-# triggered, cut ε=0.075's re-trigger count from 5 to 3 and roughly tripled
-# the interval between later re-triggers (1100-1450 docs -> 3450 docs) at
-# effectively no cost to final purity (0.660 -> 0.651) - promoted to the
-# default. Still overridable for isolated comparisons against the old value.
-HOTSWAP_BUFFER_SIZE = int(os.environ.get("HOTSWAP_BUFFER_SIZE", config.evolution.hotswap_buffer_size))
+HOTSWAP_BUFFER_SIZE = config.evolution.hotswap_buffer_size
+PCA_COMPONENTS = 16
+LAMBDA_EASING_RATE = 0.90
 
-# Warm-up: the first INITIAL_WARMUP_SIZE documents of the stream are used to
-# fit IPCA and to warm-start both DenStream models (StreamClusterer.warm_start,
-# the same procedure a swapped-in model goes through on its buffer); per-batch
-# scoring starts right after them.
-
-# Built after all env-var-driven settings above so a run under non-default
-# settings never overwrites the validated baseline sweep's result files.
-RESULT_SUFFIX = ""
-if COOLDOWN_MODE != "asymmetric_own":
-    RESULT_SUFFIX += f"__{COOLDOWN_MODE}"
-if HOTSWAP_BUFFER_SIZE != config.evolution.hotswap_buffer_size:
-    RESULT_SUFFIX += f"__buf{HOTSWAP_BUFFER_SIZE}"
-
-# Sweep grid: 5 epsilon x 5 decay = 25 combinations, spanning the full
-# NSGA-II search space defined in config.evolution.param_bounds - epsilon
-# [0.05, 0.40], decaying_factor [0.005, 0.08] - and staying within those
-# bounds on both ends for both parameters (not below, not above). The
-# epsilon values match the thesis 1 grid inside these bounds.
+# Starting parameters: a 5 x 5 grid over the NSGA-II search space.
 SWEEP_EPSILON_VALUES = [0.05, 0.10, 0.20, 0.30, 0.40]
 SWEEP_DECAY_VALUES = [0.005, 0.02, 0.04, 0.06, 0.08]
-PCA_COMPONENTS = 16
 
 
 def create_dataset_stream(
@@ -136,9 +86,7 @@ def create_dataset_stream(
 
 
 def _load_or_build_dataset() -> Tuple[List[str], List[str]]:
-    """Text cleaning is identical across every (eps, decay) combo in a sweep,
-    so cache it once instead of re-running BeautifulSoup over 10k docs per run.
-    """
+    """Cleaned texts and labels of the whole stream, cached after the first call."""
     if os.path.exists(DATASET_CACHE_PATH):
         with open(DATASET_CACHE_PATH, "rb") as f:
             return pickle.load(f)
@@ -172,10 +120,7 @@ def run_drift_experiment(
 ) -> pd.DataFrame:
     set_seed(42)
 
-    assert len(PHASE1_CATEGORIES) == len(PHASE2_CATEGORIES), (
-        "Phase category lists must match in length so the true number of "
-        "macro-clusters stays constant across the drift."
-    )
+    assert len(PHASE1_CATEGORIES) == len(PHASE2_CATEGORIES)
     n_expected_macro = len(PHASE1_CATEGORIES)
 
     texts, labels_abrupt = _load_or_build_dataset()
@@ -191,10 +136,6 @@ def run_drift_experiment(
     ipca_static.partial_fit(warmup_raw)
     ipca_hotswap = copy.deepcopy(ipca_static)
 
-    # Both static and hot-swap start from the SAME swept (initial_eps,
-    # initial_decay) for this run - the grid tests both models across the
-    # full range of starting combinations, not just the hot-swap side against
-    # one fixed reference.
     common_kwargs = dict(
         epsilon=initial_eps,
         decaying_factor=initial_decay,
@@ -235,20 +176,10 @@ def run_drift_experiment(
     records = []
     collecting_for_hotswap = False
     hotswap_buffer_collected_raw: List[np.ndarray] = []
-    # The hot-swap is triggered exclusively by the detector's own signals
-    # (quality drop / centroid shift) - no hardcoded `curr_idx == DRIFT_POINT`
-    # fallback. DRIFT_POINT is only the point at which the underlying data
-    # stream switches topics (ground truth for evaluation/plotting); the
-    # detector doesn't get to see it, so this is genuinely blind detection.
-    trigger_sample_idx: Optional[int] = None
-    # Sample index where the first hot-swap actually COMPLETES (new model
-    # deployed), as opposed to trigger_sample_idx (when drift was first
-    # detected). Between the two, the hot-swap model is still architecturally
-    # identical to the static one - it needs HOTSWAP_BUFFER_SIZE fresh post-drift
-    # documents before it can retrain, so it necessarily performs just as
-    # badly as static during that window. That's a real, unavoidable
-    # detection-to-deployment lag, not the new model underperforming.
-    swap_sample_idx: Optional[int] = None
+    # The swap is triggered only by the detector; DRIFT_POINT is used for
+    # evaluation and plots, never by the system.
+    trigger_sample_idx: Optional[int] = None  # first alarm
+    swap_sample_idx: Optional[int] = None  # first deployed replacement model
 
     for b in range(start_batch, n_batches):
         s_i = b * BATCH_SIZE
@@ -281,27 +212,14 @@ def run_drift_experiment(
         if collecting_for_hotswap:
             hotswap_buffer_collected_raw.extend(b_raw)
             if len(hotswap_buffer_collected_raw) >= HOTSWAP_BUFFER_SIZE:
-                logger.info(
-                    "Drift buffer full! Initiating Full Pipeline Hot-Swap (IPCA + DenStream)..."
-                )
-
-                # 1. Re-fit the feature extractor on the new concept.
+                logger.info("Swap buffer full, refitting IPCA and optimising DenStream parameters")
                 new_ipca = IncrementalPCA(n_components=PCA_COMPONENTS)
                 new_ipca.partial_fit(np.array(hotswap_buffer_collected_raw))
                 new_buffer_proj = normalize(
                     new_ipca.transform(np.array(hotswap_buffer_collected_raw))
                 )
-
-                # 2. Evolve DenStream params for the new embedding space.
                 compromise, _, _ = opt_hotswap.evolve(data_buffer=new_buffer_proj)
-
-                # 3. Swap in the newly-evolved DenStream instance.
-                c_hotswap.hot_swap_model(
-                    new_params=compromise.params,
-                    window_data=new_buffer_proj,
-                )
-
-                # 4. Swap in the newly-fitted feature extractor.
+                c_hotswap.hot_swap_model(new_params=compromise.params, window_data=new_buffer_proj)
                 ipca_hotswap = new_ipca
 
                 m_hot = c_hotswap.get_metrics()
@@ -310,12 +228,11 @@ def run_drift_experiment(
                 if swap_sample_idx is None:
                     swap_sample_idx = curr_idx
 
-        # Cooldown: see COOLDOWN_MODE above for the three variants under test.
-        if not collecting_for_hotswap and COOLDOWN_MODE != "none":
-            anchor = initial_decay if COOLDOWN_MODE == "asymmetric_own" else config.denstream.decaying_factor
-            curr_decay = getattr(c_hotswap.model, "decaying_factor", anchor)
-            if curr_decay > anchor:
-                c_hotswap.model.decaying_factor = max(anchor, curr_decay * 0.90)
+        # After a swap, a lambda above the starting value is eased back to it.
+        if not collecting_for_hotswap:
+            curr_decay = c_hotswap.model.decaying_factor
+            if curr_decay > initial_decay:
+                c_hotswap.model.decaying_factor = max(initial_decay, curr_decay * LAMBDA_EASING_RATE)
 
         records.append(
             {
@@ -326,8 +243,8 @@ def run_drift_experiment(
                 "hotswap_silhouette": m_hot["silhouette"],
                 "outlier_ratio": m_hot["outlier_ratio"],
                 "centroid_shift": m_hot["centroid_shift"],
-                "eps_adapted": getattr(c_hotswap.model, "epsilon", initial_eps),
-                "decay_adapted": getattr(c_hotswap.model, "decaying_factor", initial_decay),
+                "eps_adapted": c_hotswap.model.epsilon,
+                "decay_adapted": c_hotswap.model.decaying_factor,
                 "static_latency_ms": m_stat["latency_ms_per_doc"],
                 "hotswap_latency_ms": m_hot["latency_ms_per_doc"],
                 "static_micro": m_stat["n_micro_clusters"],
@@ -337,14 +254,12 @@ def run_drift_experiment(
         )
 
     if trigger_sample_idx is None:
-        logger.warning(
-            "Detector never fired during the whole stream - no hot-swap happened this run."
-        )
+        logger.warning("The detector never fired, no swap happened in this run.")
 
     df = pd.DataFrame(records)
     df["trigger_sample_idx"] = trigger_sample_idx
     df["swap_sample_idx"] = swap_sample_idx
-    out_path = f"{RESULTS_DIR}/thesis_2_drift_results_eps_{initial_eps}_decay_{initial_decay}{RESULT_SUFFIX}.csv"
+    out_path = f"{RESULTS_DIR}/thesis_2_drift_results_eps_{initial_eps}_decay_{initial_decay}.csv"
     df.to_csv(out_path, index=False)
     logger.success(f"Saved results to {out_path}")
     return df

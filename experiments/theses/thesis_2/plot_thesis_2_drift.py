@@ -1,25 +1,12 @@
 """
-Plots for the thesis-2 drift-adaptation sweep (5 epsilon x 5 decay = 25 runs).
-
-Reads the per-combo CSVs written by exp_thesis_2_drift.py / run_sweep.py and
-produces:
-  - thesis_2_band_*.png       single normal-width chart per metric (ghost
-                               clusters, purity, silhouette, outlier-ratio
-                               drift signal): mean line + shaded min-max range
-                               across all loaded combos, static vs Evostream
-                               overlaid. These are the figures meant for the
-                               thesis document - no wide multi-panel grids.
-  - thesis_2_param_convergence_heatmap.png
-                               where (eps, decay) settle after adaptation,
-                               regardless of starting point
-  - thesis_2_trajectory_example.png
-                               epsilon/decay trajectory for one representative
-                               run, as two stacked single-axis panels (a
-                               dual-axis/twinx chart is a well-known
-                               readability anti-pattern, so this replaces it)
-  - thesis_2_summary_purity_gain.png
-                               aggregate static-vs-hotswap comparison across
-                               all combos
+Figures for the thesis 2 sweep, read from the per-run CSVs written by
+exp_thesis_2_drift.py / run_sweep.py:
+  - thesis_2_band_*.png: mean and min-max range over all runs for each
+    metric, static vs adaptive, with a strip of drift alarms below;
+  - thesis_2_param_convergence_heatmap.png: final epsilon and lambda for
+    every starting configuration;
+  - thesis_2_trajectory_example.png: epsilon and lambda over one run;
+  - thesis_2_summary_purity_gain.png: final purity, static vs adaptive.
 """
 
 import os
@@ -45,12 +32,6 @@ from src.core.config import config
 RESULTS_DIR = "experiments/theses/thesis_2/results"
 DEFAULT_COMBO = (0.10, 0.005)
 
-# Full stream length (phase 1 + phase 2). Used as a fixed, known x-limit
-# instead of reading back matplotlib's autoscaled range: with sharex=True
-# across small-multiple facets, an axis pinned from an EMPTY facet (no data
-# for that combo yet) propagates its tiny default range to every other
-# facet sharing that axis group, silently truncating facets that do have
-# data plotted after it. A fixed bound sidesteps that ordering trap entirely.
 STREAM_LENGTH = 2 * SAMPLES_PER_PHASE
 
 WARMUP_COLOR = "#b2ebf2"
@@ -91,8 +72,6 @@ def _style_axis(ax):
     ax.axvspan(0, WARMUP_END, color=WARMUP_COLOR, alpha=0.9, zorder=0)
     ax.axvline(DRIFT_POINT, color=DRIFT_LINE_COLOR, linestyle=(0, (1, 1)), lw=1.8, zorder=1)
     ax.grid(True, linestyle="--", alpha=0.4)
-    # Fixed, known bound (see STREAM_LENGTH comment above) - safe to set here,
-    # before any data is plotted, since it never depends on autoscale.
     ax.set_xlim(0, STREAM_LENGTH)
 
 
@@ -104,8 +83,7 @@ def _base_legend_handles() -> List:
 
 
 def _detection_counts(dfs: Dict[Tuple[float, float], pd.DataFrame]) -> Dict[float, int]:
-    """How many loaded combos' detectors fired at each sample_idx (not just
-    the true, purposely-induced drift at DRIFT_POINT)."""
+    """Number of runs whose detector fired at each sample_idx."""
     counts: Dict[float, int] = {}
     for df in dfs.values():
         if "drift_detected" not in df.columns:
@@ -116,12 +94,7 @@ def _detection_counts(dfs: Dict[Tuple[float, float], pd.DataFrame]) -> Dict[floa
 
 
 def _plot_detection_density(ax, dfs: Dict[Tuple[float, float], pd.DataFrame]):
-    """Thin bar-chart strip: bar height = number of combos whose detector
-    fired at that sample_idx. A separate panel (sharing the main chart's
-    x-axis) rather than overlaying bands on the data itself, so "how common
-    was this detection point" reads directly off bar height instead of
-    guessing at stacked alpha, and the main trend lines stay uncluttered.
-    """
+    """Strip below the main chart: number of runs raising an alarm per batch."""
     ax.axvspan(0, WARMUP_END, color=WARMUP_COLOR, alpha=0.9, zorder=0)
     ax.axvline(DRIFT_POINT, color=DRIFT_LINE_COLOR, linestyle=(0, (1, 1)), lw=1.8, zorder=1)
     ax.set_xlim(0, STREAM_LENGTH)
@@ -135,7 +108,7 @@ def _plot_detection_density(ax, dfs: Dict[Tuple[float, float], pd.DataFrame]):
         step = max(1, max_count // 4)
         ax.set_yticks(range(0, max_count + 1, step))
     ax.set_ylim(bottom=0)
-    ax.set_ylabel("Detekcje", fontsize=9)
+    ax.set_ylabel("Alarmy", fontsize=9)
     ax.grid(True, axis="y", linestyle="--", alpha=0.3)
     ax.set_xlabel("Liczba przetworzonych dokumentów")
 
@@ -149,16 +122,7 @@ def plot_metric_band(
     y_lim: Optional[Tuple[float, float]] = None,
     threshold: Optional[float] = None,
 ):
-    """Single normal-width chart: mean line + shaded min-max range across all
-    loaded combos, for static and Evostream overlaid in different colors with
-    enough transparency that both stay visible where they overlap. Replaces
-    the wide small-multiples grid as the figure meant for the thesis document
-    itself - one chart per metric instead of a 5-column facet grid.
-
-    Every combo shares the same sample_idx grid (same document stream, same
-    batch size, regardless of eps/decay), so the per-timestep mean/min/max
-    across combos is just a row-wise aggregate - no interpolation needed.
-    """
+    """Mean line and min-max band over all runs, static and adaptive overlaid."""
     hot_stack = pd.concat([df.set_index("sample_idx")[hot_col] for df in dfs.values()], axis=1)
     x = hot_stack.index
 
@@ -173,11 +137,7 @@ def plot_metric_band(
     if threshold is not None:
         ax.axhline(threshold, color="red", linestyle="--", lw=1.6, zorder=1)
 
-    # Fill stays translucent (so overlap is a visible blend, not one color
-    # blotting out the other), but each band also gets a near-opaque edge
-    # stroke in its own color tracing its min/max boundary - that edge stays
-    # legible even inside the overlap region, so you can always tell which
-    # band's extent you're looking at regardless of how the fills blend.
+    # Translucent fill with an opaque edge, so overlapping bands stay readable.
     if static_col:
         static_stack = pd.concat([df.set_index("sample_idx")[static_col] for df in dfs.values()], axis=1)
         ax.fill_between(
@@ -200,16 +160,16 @@ def plot_metric_band(
 
     handles = _base_legend_handles()
     if threshold is not None:
-        handles.append(Line2D([0], [0], color="red", ls="--", lw=1.6, label=f"Próg detekcji dryfu ({threshold * 100:.0f}%)"))
+        handles.append(Line2D([0], [0], color="red", ls="--", lw=1.6, label=f"Próg sygnału przesunięcia centroidów (δc = {threshold:.2f})".replace(".", ",")))
     if static_col:
         handles += [
             Line2D([0], [0], color=STATIC_COLOR, lw=2.2, label="Model statyczny (średnia)"),
             mpatches.Patch(facecolor=STATIC_COLOR, alpha=0.18, label="Model statyczny (zakres min-max)"),
         ]
     handles += [
-        Line2D([0], [0], color=HOTSWAP_COLOR, lw=2.4, label="Evostream (średnia)"),
-        mpatches.Patch(facecolor=HOTSWAP_COLOR, alpha=0.18, label="Evostream (zakres min-max)"),
-        mpatches.Patch(facecolor=DETECTION_COLOR, alpha=0.85, label="Detekcje dryfu (liczba kombinacji, panel poniżej)"),
+        Line2D([0], [0], color=HOTSWAP_COLOR, lw=2.4, label="Model adaptacyjny (średnia)"),
+        mpatches.Patch(facecolor=HOTSWAP_COLOR, alpha=0.18, label="Model adaptacyjny (zakres min-max)"),
+        mpatches.Patch(facecolor=DETECTION_COLOR, alpha=0.85, label="Alarmy detektora (liczba przebiegów, panel poniżej)"),
     ]
     ax.legend(handles=handles, loc="best", frameon=True, fontsize=9)
 
@@ -316,12 +276,12 @@ def plot_summary_gain(dfs: Dict[Tuple[float, float], pd.DataFrame], tail_docs: i
     means = [summary["static_purity"].mean(), summary["hotswap_purity"].mean()]
     stds = [summary["static_purity"].std(), summary["hotswap_purity"].std()]
     colors = [STATIC_COLOR, HOTSWAP_COLOR]
-    labels = ["Model statyczny", "Evostream (hot-swap)"]
+    labels = ["Model statyczny", "Model adaptacyjny"]
     x = np.arange(2)
     ax.bar(x, means, yerr=stds, capsize=6, color=colors, width=0.55)
     ax.set_xticks(x)
     ax.set_xticklabels(labels)
-    ax.set_ylabel(f"Czystość po ustabilizowaniu\n(średnia ± odch. std. z {len(summary)} kombinacji)")
+    ax.set_ylabel(f"Czystość po ustabilizowaniu\n(średnia ± odch. std. z {len(summary)} przebiegów)")
     ax.set_ylim(0, 1.05)
     ax.grid(True, axis="y", linestyle="--", alpha=0.4)
     plt.tight_layout()
@@ -339,8 +299,6 @@ def main():
         print("No result CSVs found. Run run_sweep.py (or exp_thesis_2_drift.py) first.")
         return
 
-    # One normal-width chart per metric: mean + min-max band across all
-    # loaded combos. These are the figures meant for the thesis document.
     plot_metric_band(
         dfs, "Liczba mikroklastrów", "static_micro", "hotswap_micro", "thesis_2_band_ghost_clusters.png",
     )

@@ -3,7 +3,7 @@ import sys
 import time
 from pathlib import Path
 
-# Ensure project root is in sys.path when launched via Streamlit CLI
+# Streamlit runs this file as a script, so the project root has to be added to the path.
 PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent)
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
@@ -24,9 +24,7 @@ from src.domain.evolution import NSGAIIOptimizer
 from src.domain.preprocessing import StreamProjector, TextPreprocessor
 from src.model.schemas import CLUSTERING_RESULTS_SCHEMA, MODEL_PARAMETERS_SCHEMA
 
-# ---------------------------------------------------------
-# Page Configuration & Styling
-# ---------------------------------------------------------
+# Page setup
 st.set_page_config(
     page_title="evostream",
     page_icon="",
@@ -60,9 +58,7 @@ st.markdown(
 )
 
 
-# ---------------------------------------------------------
-# Cached Dataset & Embedding Loader
-# ---------------------------------------------------------
+# Data and encoder
 @st.cache_resource
 def load_encoder_and_data():
     device = (
@@ -209,7 +205,7 @@ def swap_model(raw_buffer: np.ndarray):
     st.session_state.latest_compromise = compromise
     st.session_state.clusterer.hot_swap_model(compromise.params, projected)
     print(
-        f"✅ NSGA-II done | Front size={len(front)} | "
+        f"NSGA-II done | front size={len(front)} | "
         f"Compromise: ε={compromise.params['epsilon']:.4f} "
         f"λ={compromise.params['decaying_factor']:.4f} "
         f"Quality={compromise.quality_score:.4f} Complexity={compromise.complexity_score:.4f}"
@@ -217,9 +213,7 @@ def swap_model(raw_buffer: np.ndarray):
     return compromise
 
 
-# ---------------------------------------------------------
-# Session State Initialization
-# ---------------------------------------------------------
+# Session state
 if "clusterer" not in st.session_state:
     reset_session_state()
 
@@ -229,9 +223,7 @@ TOPICS_B = config.dataset.categories_concept_b
 TOPICS_C = config.dataset.categories_concept_c
 
 
-# ---------------------------------------------------------
-# Sidebar Controls
-# ---------------------------------------------------------
+# Sidebar
 
 if st.session_state.current_concept == "A":
     active_concept_str = "Koncept A: Nauka i motoryzacja (sci/rec)"
@@ -249,16 +241,14 @@ st.sidebar.markdown(
     + "".join([f"- `{t}`\n" for t in active_topics_list])
 )
 
-# Live Streaming & Pace Controls
 st.sidebar.markdown("---")
 st.sidebar.markdown("### Przepływ i tempo strumienia")
 
-# Same batch size as the thesis experiments - the detector's windows and
-# warm-up periods are counted in batches.
+# The detector's windows are counted in batches, so the batch size matches
+# the thesis experiments.
 batch_size = config.ml.batch_size
 stream_delay = 0.2
 
-# Auto-Stream Play / Pause Button
 if st.session_state.get("is_streaming", False):
     if st.sidebar.button("Zatrzymaj strumień", type="primary", width="stretch"):
         st.session_state.is_streaming = False
@@ -298,9 +288,7 @@ if st.session_state.collecting_for_swap:
     )
 
 
-# ---------------------------------------------------------
-# Actions Handling
-# ---------------------------------------------------------
+# Sidebar actions
 if reset_clicked:
     reset_session_state()
     st.rerun()
@@ -316,8 +304,7 @@ if abrupt_drift_clicked:
     )
 
 if manual_ga_clicked:
-    # Manual trigger for demonstrations: swaps immediately on the most recent
-    # window of documents instead of waiting for a drift alarm.
+    # Demo shortcut: swap right away on the recent window, without waiting for an alarm.
     if len(st.session_state.recent_raw_buffer) >= config.evolution.min_eval_buffer:
         with st.spinner("Optymalizacja wielokryterialna NSGA-II..."):
             compromise = swap_model(np.array(st.session_state.recent_raw_buffer))
@@ -343,7 +330,6 @@ def _slice_circular(data_list, start_idx, size):
 
 
 def ingest_batch(current_b_size):
-    # Select batch from current active concept
     if st.session_state.current_concept == "A":
         batch_items, st.session_state.stream_idx_a = _slice_circular(
             data_a, st.session_state.stream_idx_a, current_b_size
@@ -360,7 +346,6 @@ def ingest_batch(current_b_size):
     batch_texts = [item[0] for item in batch_items]
     batch_labels = [item[1] for item in batch_items]
 
-    # SBERT Encoding
     device = (
         "mps"
         if torch.backends.mps.is_available()
@@ -374,17 +359,15 @@ def ingest_batch(current_b_size):
         convert_to_numpy=True,
     )
 
-    # IPCA projection (frozen between model swaps)
     reduced_vecs = st.session_state.projector.transform(sbert_vecs)
 
-    # Cluster Update
     batch_macro_preds = st.session_state.clusterer.update(
         reduced_vecs, labels=batch_labels
     )
     metrics = st.session_state.clusterer.get_metrics()
     st.session_state.total_docs_processed += len(batch_texts)
 
-    # Recent-window buffers (plots, sample documents, manual NSGA-II)
+    # Recent window, used by the plots, the sample documents and the manual NSGA-II button.
     w_size = config.denstream.window_size
     st.session_state.recent_vectors_buffer = (st.session_state.recent_vectors_buffer + list(reduced_vecs))[-w_size:]
     st.session_state.recent_raw_buffer = (st.session_state.recent_raw_buffer + list(sbert_vecs))[-w_size:]
@@ -405,15 +388,14 @@ def ingest_batch(current_b_size):
         f"λ={st.session_state.clusterer.model.decaying_factor:.4f}"
     )
 
-    # Drift detection and model swap, as in the thesis 2 experiment: an alarm
-    # starts collecting a buffer of post-drift documents; once it is full,
-    # IPCA is re-fitted, NSGA-II runs and the new model is swapped in.
+    # As in the thesis 2 experiment: an alarm starts collecting a buffer, and
+    # once it is full IPCA is refitted, NSGA-II runs and the model is swapped.
     is_drift = st.session_state.drift_detector.update(
         current_silhouette=sil, centroid_shift=shift
     )
     if is_drift:
         st.session_state.detection_events.append(st.session_state.total_docs_processed)
-        print(f"🚨 DRIFT DETECTED @ doc #{st.session_state.total_docs_processed}")
+        print(f"Drift detected at document {st.session_state.total_docs_processed}")
         if disable_adaptation:
             st.toast("🚨 Wykryto dryf (adaptacja zablokowana)", icon="🛑")
         elif not st.session_state.collecting_for_swap:
@@ -452,14 +434,11 @@ def ingest_batch(current_b_size):
     )
 
 
-# Ingest if auto-streaming is active
 if st.session_state.get("is_streaming", False):
     ingest_batch(batch_size)
 
 
-# ---------------------------------------------------------
-# Top Summary KPI Cards & Active Topics Banner
-# ---------------------------------------------------------
+# Summary cards
 
 curr_m = st.session_state.clusterer.get_metrics()
 c1, c2, c3, c4, c5, c6 = st.columns(6)
@@ -472,7 +451,6 @@ sil_val = f"{curr_m['silhouette']:.3f}" if curr_m["silhouette"] is not None else
 c5.metric("Sylwetka (iCVI)", sil_val)
 c6.metric("Opóźnienie", f"{curr_m['latency_ms_per_doc']:.2f} ms/dok.")
 
-# Top Domain Banner
 with st.container():
     if st.session_state.current_concept == "A":
         active_concept_str = "Koncept A: Nauka i motoryzacja"
@@ -484,7 +462,6 @@ with st.container():
         active_concept_str = "Koncept C: Grafika, religia i kryptografia"
         active_topics_list = TOPICS_C
 
-    # Active Concept Banner
     st.markdown(
         f"""
         <div style="background-color: #f0f7fb; border-left: 5px solid #2980b9; padding: 12px 16px; border-radius: 6px; margin: 10px 0 20px 0;">
@@ -505,9 +482,7 @@ with st.container():
 st.divider()
 
 
-# ---------------------------------------------------------
-# Main Tabs View
-# ---------------------------------------------------------
+# Views
 selected_view = st.radio(
     "Wybierz widok panelu głównego:",
     [
@@ -522,17 +497,15 @@ if selected_view == "Przestrzeń semantyczna i makroklastry (2D)":
     st.subheader("Przestrzeń semantyczna i makroklastry (2D)")
 
     if len(st.session_state.recent_2d_points) > 0:
-        import plotly.graph_objects as go
-        
+
         fig_scatter = go.Figure()
-        
-        # Opcja A: Rysujemy TYLKO mikroklastry i makroklastry (bez surowych dokumentów i mylących kół)
+
         structs = st.session_state.clusterer.get_cluster_structures()
         micro_list = []
         for k, v in structs.get("p_micro_clusters", {}).items():
             micro_list.append({
                 "type": "p-micro",
-                "center": v["center"][:2], # Bierzemy tylko 2 pierwsze wymiary centrum
+                "center": v["center"][:2],
                 "key": k,
                 "macro_id": v.get("macro_id", -1),
                 "weight": v["weight"],
@@ -545,7 +518,7 @@ if selected_view == "Przestrzeń semantyczna i makroklastry (2D)":
                 "macro_id": -1,
                 "weight": v["weight"],
             })
-            
+
         macro_clusters = {}
         for m in micro_list:
             if m["type"] == "p-micro" and m["macro_id"] != -1:
@@ -553,14 +526,14 @@ if selected_view == "Przestrzeń semantyczna i makroklastry (2D)":
                 if mid not in macro_clusters:
                     macro_clusters[mid] = []
                 macro_clusters[mid].append(m["center"])
-                
+
         macro_colors = ["#8e44ad", "#2980b9", "#27ae60", "#d35400", "#c0392b", "#f39c12", "#16a085", "#2c3e50"]
-        
-        # 1. Rysowanie Linii (powiązania mikroklastrów w makroklaster)
+
+        # Lines from each macro-cluster centre to its micro-clusters
         for mid, centers in macro_clusters.items():
             m_color = macro_colors[mid % len(macro_colors)]
             mean_center = __import__("numpy").mean(centers, axis=0).tolist()
-            
+
             for c in centers:
                 fig_scatter.add_trace(go.Scatter(
                     x=[mean_center[0], c[0]],
@@ -571,8 +544,7 @@ if selected_view == "Przestrzeń semantyczna i makroklastry (2D)":
                     showlegend=False,
                     hoverinfo="none"
                 ))
-            
-            # Punkt centralny Makroklastra (bez ogromnego kółka)
+
             fig_scatter.add_trace(go.Scatter(
                 x=[mean_center[0]],
                 y=[mean_center[1]],
@@ -584,12 +556,11 @@ if selected_view == "Przestrzeń semantyczna i makroklastry (2D)":
                 hoverinfo="none"
             ))
 
-        # 2. Rysowanie Mikroklastrów P-Micro
         for mid, centers in macro_clusters.items():
             m_color = macro_colors[mid % len(macro_colors)]
             keys = [m["key"] for m in micro_list if m["type"] == "p-micro" and m["macro_id"] == mid]
             weights = [m["weight"] for m in micro_list if m["type"] == "p-micro" and m["macro_id"] == mid]
-            
+
             fig_scatter.add_trace(go.Scatter(
                 x=[c[0] for c in centers],
                 y=[c[1] for c in centers],
@@ -597,7 +568,7 @@ if selected_view == "Przestrzeń semantyczna i makroklastry (2D)":
                 text=[f"mc{k}" for k in keys],
                 textposition="bottom right",
                 marker=dict(
-                    size=[min(30, max(10, w * 1.5)) for w in weights], # Skalowanie po wadze
+                    size=[min(30, max(10, w * 1.5)) for w in weights],
                     color=m_color,
                     line=dict(width=2, color="#ffffff"),
                 ),
@@ -605,8 +576,7 @@ if selected_view == "Przestrzeń semantyczna i makroklastry (2D)":
                 hovertext=[f"Mikroklaster {k} (Waga: {w:.1f})" for k, w in zip(keys, weights)],
                 hoverinfo="text"
             ))
-            
-        # 3. Rysowanie Szumu O-Micro
+
         o_micros = [m for m in micro_list if m["type"] == "o-micro"]
         if o_micros:
             fig_scatter.add_trace(go.Scatter(
@@ -628,15 +598,14 @@ if selected_view == "Przestrzeń semantyczna i makroklastry (2D)":
             plot_bgcolor="whitesmoke"
         )
 
-        st.plotly_chart(fig_scatter, use_container_width=True)
+        st.plotly_chart(fig_scatter, width="stretch")
 
-        # Sekcja z przykładowymi dokumentami
         st.markdown("### 📝 Przykładowe dokumenty z ostatniej partii strumienia")
         if len(st.session_state.recent_texts) > 0:
             sample_texts = st.session_state.recent_texts[-3:]
             sample_labels = st.session_state.recent_labels[-3:]
             sample_macros = st.session_state.recent_macro_preds[-3:]
-            
+
             cols = st.columns(3)
             for i, (txt, lbl, mac) in enumerate(zip(sample_texts, sample_labels, sample_macros)):
                 with cols[i]:

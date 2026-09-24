@@ -1,16 +1,7 @@
 """
-Robustness of the thesis 1 conclusions to the DenStream radius formula.
-
-Runs the thesis 1 streaming simulation with river's radius and with the
-corrected one (see src/domain/clustering.py and
-https://github.com/online-ml/river/issues/2004) over every dimensionality,
-the thesis 1 epsilon grid and several stream orders. Each seed shuffles the
-phase-1 stream differently, which also changes the documents IPCA is fitted
-on, so the results show how much of each difference is noise.
-
-Runs are independent processes (each has its own RNG state and its own
-radius setting). Latencies measured with several workers in parallel are
-only indicative - use thesis 1 for timing.
+Reruns the thesis 1 simulation with river's radius formula and with the
+corrected one, for every dimension, epsilon and stream order. Runs are
+parallel processes, so the timings here are only indicative.
 """
 
 import argparse

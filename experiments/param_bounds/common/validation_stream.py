@@ -1,13 +1,7 @@
 """
-Validation stream for choosing the NSGA-II search-space bounds (thesis
-section 3.4).
-
-It is built only from the eight 20 Newsgroups categories that no thesis
-experiment uses, so the bounds are chosen on data completely separate from
-the data the theses are evaluated on. Two groups of four categories form an
-abrupt topic change after VALIDATION_SAMPLES_PER_PHASE documents; the text
-cleaning, filtering, shuffling and SBERT encoding are exactly the same as
-for the thesis stream.
+Validation stream for the search-space bounds (thesis section 3.4): eight
+20 Newsgroups categories not used by any thesis experiment, four before and
+four after an abrupt topic change, prepared the same way as the thesis stream.
 """
 
 import os

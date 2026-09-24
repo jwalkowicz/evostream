@@ -1,20 +1,12 @@
 """
-Thesis 3 experiment: the Pareto trade-off between clustering quality and
-structural complexity found by NSGA-II, and how stable its compromise
-solution is across projection dimensions and repetitions.
+Thesis 3 experiment: Pareto fronts and compromise solutions of NSGA-II for
+several projection dimensions.
 
-The environment mirrors theses 1 and 2. NSGA-II is run exactly as in the
-thesis 2 model swap: on a buffer of HOTSWAP_BUFFER_SIZE consecutive documents
-of the thesis stream, projected with an IPCA fitted on that buffer, with the
-same objectives, bounds and settings from config. For each dimension the
-run is repeated on buffers from both stream phases (the topic sets before
-and after the drift) and several stream shuffles, with a different NSGA-II
-seed each time, so the spread of the results measures stability.
-
-Silhouette - the optimiser's quality objective - is computed in a different
-space for every dimension and cannot be compared across them. Each
-compromise solution is therefore also scored against the true categories
-(purity, NMI) on its buffer, which is comparable across dimensions.
+NSGA-II runs as in a thesis 2 model swap, on a buffer of HOTSWAP_BUFFER_SIZE
+documents projected with an IPCA fitted on that buffer. Each dimension is
+repeated on buffers from both stream phases and several stream orders.
+Because the silhouette objective is not comparable across dimensions, each
+compromise solution is also scored against the true categories (purity, NMI).
 """
 
 import argparse

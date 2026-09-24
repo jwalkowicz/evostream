@@ -27,19 +27,10 @@ class TextPreprocessor:
 
 
 class StreamProjector:
-    """
-    Projects L2-normalised SBERT embeddings into the clustering space, the
-    same way as in the thesis experiments.
-
-    IPCA is fitted once, on an initial buffer of documents, and then frozen:
-    a continuously updated IPCA would rotate the projection basis under the
-    micro-clusters already built in it. It is re-fitted only on a model swap
-    after drift, on post-drift documents. Output vectors are L2-normalised,
-    so Euclidean distance between them reflects cosine similarity.
-
-    With n_components=None the embeddings are passed through unchanged
-    (full-dimensional variant).
-    """
+    """IPCA projection of SBERT embeddings, fitted on a buffer and then
+    frozen until the next model swap (refitting it continuously would rotate
+    the space under existing micro-clusters). Outputs are L2-normalised.
+    n_components=None passes the embeddings through unchanged."""
 
     def __init__(self, n_components: Optional[int]):
         self.n_components = n_components

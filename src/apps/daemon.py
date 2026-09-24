@@ -25,16 +25,9 @@ class DaemonPrototype:
 
 
 class ClusteringDaemon:
-    """
-    Consumes raw text data from Kafka and runs the adaptive clustering
-    pipeline the same way as the thesis 2 experiment:
-
-    SBERT -> IPCA (fitted once on the first documents, then frozen) ->
-    two-phase DenStream -> unsupervised drift detection. After a drift alarm
-    the daemon collects a buffer of post-drift documents, re-fits IPCA on
-    them, evolves DenStream parameters with NSGA-II and swaps in the new
-    projection and model together.
-    """
+    """Reads documents from Kafka and runs the same pipeline as the thesis 2
+    experiment: SBERT, IPCA, DenStream, drift detection and, after an alarm,
+    a model swap with NSGA-II on a buffer of new documents."""
 
     def __init__(
         self,

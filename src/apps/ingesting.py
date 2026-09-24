@@ -21,11 +21,8 @@ class IngesterPrototype:
 
 
 class IngesterApp:
-    """
-    Simulates a text data stream using the 20 Newsgroups dataset.
-    Implements concept drift.
-    Attaches ground-truth category labels to each message for evaluation.
-    """
+    """Sends 20 Newsgroups documents to Kafka with an abrupt topic change,
+    each message carrying its category for evaluation."""
 
     def __init__(self, producer, prototype: IngesterPrototype):
         self.producer = producer
@@ -43,7 +40,7 @@ class IngesterApp:
         samples = []
         for text, target_idx in zip(dataset.data, dataset.target):
             cleaned = text.strip()
-            if len(cleaned) > 10:  # Filter out empty/trivial samples
+            if len(cleaned) > 10:
                 label_name = dataset.target_names[target_idx]
                 samples.append((cleaned, label_name))
 
@@ -59,11 +56,9 @@ class IngesterApp:
         signal.signal(signal.SIGINT, self.handle_shutdown)
         signal.signal(signal.SIGTERM, self.handle_shutdown)
 
-        # initial concept
         phase1_categories = ["sci.space", "sci.med", "rec.autos"]
         phase1_data = self._load_data_with_labels(phase1_categories)
 
-        # drift cncept
         phase2_categories = [
             "rec.sport.baseball",
             "comp.sys.ibm.pc.hardware",

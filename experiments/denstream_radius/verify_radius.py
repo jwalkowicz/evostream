@@ -1,17 +1,10 @@
 """
-Verifies the DenStream micro-cluster radius computed by river against the
-definition of Cao et al. (2006): the RMS distance of the members from the
-micro-cluster centre, computed here by brute force from the raw points.
-
-Three checks, each comparing river's formula and the corrected one:
-  A. The example from https://github.com/online-ml/river/issues/2004: the
-     same 2-D Gaussian cloud (std 1, true radius ~1.41) at several positions.
-     A radius must not depend on where the cloud sits.
-  B. The same 20 documents (16-d IPCA projection) rotated and embedded in 384
-     dimensions. All pairwise distances stay identical, so a radius - and any
-     effect of the curse of dimensionality - must stay identical too.
-  C. 20 random documents from the raw 384-d SBERT embeddings used by the
-     thesis experiments.
+Compares river's micro-cluster radius and the corrected formula with the
+radius computed directly from the points (RMS distance from the centre):
+  A. the 2-D Gaussian cloud from river issue #2004, placed at several positions;
+  B. 20 documents in 16 dimensions, embedded in 384 dimensions and rotated
+     (distances unchanged, so the radius must not change);
+  C. random groups of 20 raw SBERT embeddings.
 """
 
 import numpy as np

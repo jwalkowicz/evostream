@@ -1,11 +1,7 @@
 """
-Runs the (epsilon x decaying_factor) sweep for the thesis-2 drift experiment
-directly in Python - no shelling out to `uv run python -m ... --eps ...`
-per combo - then regenerates all plots.
-
-Each combination runs in its own worker process, so every run has its own
-isolated random-number state (run_drift_experiment() seeds it at the start)
-and the results are reproducible whatever the number of workers.
+Runs the thesis 2 sweep over starting (epsilon, decaying_factor) and
+regenerates the figures. Each run gets its own process, so the results do
+not depend on the number of workers.
 """
 
 import argparse
@@ -21,8 +17,7 @@ from experiments.theses.thesis_2.exp_thesis_2_drift import (
 from experiments.theses.thesis_2.plot_thesis_2_drift import main as generate_all_plots
 from src.core.logger import logger
 
-# Small subset for validating the pipeline before committing to the full grid:
-# the default combo, plus the opposite corner of the (in-bounds) grid.
+# Two corners of the grid, for a quick check before the full sweep.
 QUICK_COMBOS: List[Tuple[float, float]] = [(0.10, 0.005), (0.40, 0.08)]
 
 DEFAULT_WORKERS = 4

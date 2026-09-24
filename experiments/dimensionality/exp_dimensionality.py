@@ -1,18 +1,9 @@
 """
-A-priori analysis of the SBERT embedding space (thesis section 3.3), run on
-the same 5000-document stream as thesis 1 (the pre-drift phase of thesis 2):
-
-  - intrinsic dimensionality, estimated with the Levina-Bickel maximum
-    likelihood estimator (MLE) over k = 10..20 nearest neighbours,
-  - cumulative variance explained by the first d principal components,
-  - distance contrast ratio DCR = (max - min) / mean pairwise distance,
-    after projecting to d components and L2-normalising (as in the system);
-    it drops as distances concentrate in high dimensions.
-
-All three are computed on the same 5000 documents.
-
-Standard PCA on the whole sample is used here (not IPCA) to obtain exact
-explained-variance values.
+Analysis of the SBERT embedding space (thesis section 3.3) on the 5000
+documents of the thesis 1 stream: intrinsic dimension (Levina-Bickel MLE,
+k = 10..20), cumulative explained variance, and the distance contrast ratio
+DCR = (max - min) / mean pairwise distance after projection and
+normalisation. Uses standard PCA to get exact explained variance.
 """
 
 import json

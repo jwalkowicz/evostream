@@ -1,15 +1,9 @@
 """
-Search-space bounds for the DenStream epsilon parameter (thesis section 3.4).
+Search-space bounds for epsilon (thesis section 3.4).
 
-Streams the first phase of the validation stream (4 categories that no
-thesis experiment uses, 3000 documents, d = 16; see
-experiments/param_bounds/common/validation_stream.py) through the full
-two-phase clusterer for a grid of epsilon values and records clustering
-quality and the number of p-micro-clusters. The bounds are therefore chosen
-on data completely separate from the data the theses are evaluated on.
-Every epsilon is run at both ends of the decaying-factor search range, so the
-chosen bounds hold whatever lambda NSGA-II picks, and on several stream
-orders to separate real effects from noise.
+Runs the clusterer on the first phase of the validation stream for a grid of
+epsilon values, at both ends of the lambda range and on several stream
+orders, and records clustering quality and the number of p-micro-clusters.
 """
 
 import argparse

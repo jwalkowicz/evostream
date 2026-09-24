@@ -1,25 +1,13 @@
 """
-Search-space bounds for the DenStream decaying factor lambda (thesis
-section 3.4), measured on the system's own time scale.
+Search-space bounds for the decaying factor lambda (thesis section 3.4).
 
-River's DenStream advances its clock by one tick every `stream_speed`
-documents (the system uses the default, 100), and a micro-cluster that
-receives no new points loses half its weight every 1 / lambda ticks, i.e.
-every stream_speed / lambda documents. The earlier version of this
-experiment used stream_speed = 1, a clock 100x faster than the system's.
-
-The validation stream (4 categories that no thesis experiment uses, abrupt
-switch to 4 other unused categories after 3000 documents, d = 16, IPCA
-fitted on the first documents; see
-experiments/param_bounds/common/validation_stream.py) is processed by a
-static clusterer - no drift detection or adaptation - for a grid of lambda
-values, on several stream orders. The bounds are therefore chosen on data
-completely separate from the data the theses are evaluated on. For each
-lambda it records:
-  - clustering quality before the switch (does forgetting hurt a stable
-    stream?) and after it (does it help the model let go of old topics?),
-  - how many of the p-micro-clusters alive at the switch survive 500, 1000,
-    2000 and 3000 documents later.
+A static clusterer (no drift detection) processes the validation stream,
+which switches topics after 3000 documents, for a grid of lambda values and
+several stream orders. For each lambda it records purity before and after
+the switch and how many of the p-micro-clusters alive at the switch survive
+500-3000 documents later. River advances its clock every stream_speed = 100
+documents, so the half-life of an unused micro-cluster is 100 / lambda
+documents.
 """
 
 import argparse
@@ -75,10 +63,8 @@ def run_one(seed: int, decay: float) -> Tuple[dict, pd.DataFrame]:
     clusterer.warm_start(normalize(ipca.transform(embeddings[:INITIAL_WARMUP_SIZE])))
 
     records = []
-    # River replaces a micro-cluster with an updated copy whenever it absorbs
-    # a point, so old structures are tracked by their creation time, which
-    # the copies keep: a p-micro-cluster is "old" if it was created before
-    # the topic switch.
+    # River copies a micro-cluster when it absorbs a point, so micro-clusters
+    # are tracked by creation time: "old" means created before the switch.
     switch_time = None
     n_old_at_switch = 0
     for start in range(INITIAL_WARMUP_SIZE, len(embeddings), BATCH_SIZE):

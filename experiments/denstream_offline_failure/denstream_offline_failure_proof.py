@@ -1,15 +1,9 @@
 """
-Control experiment for thesis section 2.3.2: why DenStream's native offline
-phase (DBSCAN over p-micro-cluster centres, merging two centres closer than
-2 * epsilon) does not work in this system.
-
-Runs river's DenStream with the system's settings on the thesis stream (the
-same 5000 documents, IPCA fitted on the first documents and frozen, batches
-as in the thesis experiments, with DenStream warm-started on the same
-warm-up documents) and records, after each batch, the number of
-p-micro-clusters, the number of macro-clusters produced by river's native
-offline phase, and the distances between p-micro-cluster centres compared
-with the 2 * epsilon merge threshold.
+Why DenStream's native offline phase (DBSCAN over p-micro-cluster centres,
+merging centres closer than 2 * epsilon) fails in this system (thesis
+section 2.3.2). Records, after each batch of the thesis stream, the number of
+p-micro-clusters, the number of macro-clusters found by river and the
+distances between centres compared with 2 * epsilon.
 """
 
 import numpy as np
@@ -47,8 +41,7 @@ def main():
         batch = normalize(ipca.transform(embeddings[start : start + BATCH_SIZE]))
         for x, _ in stream.iter_array(batch):
             model.learn_one(x)
-        # river runs its native offline phase (DBSCAN over p-micro-clusters)
-        # inside predict_one and stores the result in model.clusters
+        # predict_one runs river's own offline phase and fills model.clusters.
         model.predict_one(dict(enumerate(batch[-1])))
 
         _, centers = micro_cluster_centers(model)

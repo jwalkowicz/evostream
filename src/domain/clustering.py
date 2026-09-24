@@ -121,12 +121,7 @@ class StreamClusterer:
         self.micro_to_macro = {}
         self.n_macro_clusters = 0
 
-        # For the centroid-shift drift signal: a short history of
-        # macro-cluster centroids, one snapshot per update() call, so we can
-        # compare "now" against "N batches ago" and measure how far the
-        # cluster centers have actually moved in the embedding space - a
-        # purely geometric signal, independent of clustering quality
-        # (silhouette) or micro-cluster bookkeeping (outlier ratio).
+        # Macro-cluster centroids after each batch, for the centroid-shift signal.
         self.centroid_shift_lookback_batches = centroid_shift_lookback_batches
         self.centroid_history = collections.deque(maxlen=centroid_shift_lookback_batches + 1)
 
@@ -136,23 +131,13 @@ class StreamClusterer:
         self.micro_to_macro = {k: int(label) for k, label in zip(keys, labels)}
         self.n_macro_clusters = len(set(self.micro_to_macro.values()))
         logger.info(
-            f"Custom Offline Phase: mapped {len(keys)} p-micro-clusters to {self.n_macro_clusters} macro-clusters."
+            f"Offline phase: {len(keys)} p-micro-clusters grouped into {self.n_macro_clusters} macro-clusters"
         )
 
     def predict_one(self, x: dict) -> int:
-        """
-        Assigns a point to the nearest p-micro-cluster.
-        Returns the associated macro_id, or -1 (noise) if there are no
-        p-micro-clusters yet.
-
-        Note: this deliberately does NOT threshold on `self.model.epsilon`.
-        DenStream's epsilon bounds a micro-cluster's internal radius (a
-        variance-like spread statistic over all its members), not the raw
-        distance from an individual point to the cluster center - those are
-        different scales, and thresholding raw point-to-center distance
-        against epsilon flags nearly every point as noise even when it was
-        legitimately merged into that cluster.
-        """
+        """Macro-cluster of the nearest p-micro-cluster, or -1 if there are
+        none yet. Epsilon bounds a micro-cluster's radius, not the distance of
+        a single point to its centre, so it is not used as a noise threshold."""
         if not self.model.p_micro_clusters:
             return -1
 
@@ -170,8 +155,7 @@ class StreamClusterer:
         return self.micro_to_macro.get(best_mc, -1)
 
     def _compute_macro_centroids(self) -> Dict[int, np.ndarray]:
-        """Weight-averages each macro-cluster's member p-micro-cluster
-        centers into a single centroid vector per macro label."""
+        """Weighted mean of the p-micro-cluster centres of each macro-cluster."""
         t = getattr(self.model, "timestamp", 0)
         p_mcs = getattr(self.model, "p_micro_clusters", {})
 
@@ -200,13 +184,10 @@ class StreamClusterer:
         }
 
     def get_centroid_shift(self) -> Optional[float]:
-        """Mean distance the current macro-cluster centroids have moved
-        compared to centroid_shift_lookback_batches ago. Matches centroids by
-        nearest-neighbor rather than by label, since offline re-clustering
-        doesn't guarantee stable label IDs across calls. Returns None until
-        enough history has accumulated, or if either snapshot has no
-        centroids (e.g. still warming up).
-        """
+        """Mean distance from each current macro-cluster centroid to the
+        nearest centroid from centroid_shift_lookback_batches ago (macro
+        labels are not stable between offline runs). None until there is
+        enough history."""
         lookback = self.centroid_shift_lookback_batches
         if len(self.centroid_history) <= lookback:
             return None
@@ -226,9 +207,7 @@ class StreamClusterer:
         embeddings: Union[np.ndarray, List[List[float]]],
         labels: Optional[List[Union[str, int]]] = None,
     ) -> List[int]:
-        """
-        Updates the model with new embeddings and returns macro-cluster assignments.
-        """
+        """Learns a batch and returns its macro-cluster assignments."""
         if len(embeddings) == 0:
             return []
 
@@ -265,9 +244,7 @@ class StreamClusterer:
         return batch_macro_preds
 
     def get_cluster_structures(self) -> Dict[str, Any]:
-        """
-        Returns a physical dump of the model's memory.
-        """
+        """Current micro-clusters and their macro-cluster assignment, for plotting."""
         t = getattr(self.model, "timestamp", 0)
         p_mcs = getattr(self.model, "p_micro_clusters", {})
         o_mcs = getattr(self.model, "o_micro_clusters", {})
@@ -302,16 +279,7 @@ class StreamClusterer:
         n_o_mc = len(o_mcs)
         n_noise_in_window = sum(1 for p in self.window_macro_preds if p == -1)
 
-        # Ratio of outlier- to total micro-cluster WEIGHT (DenStream's own
-        # decayed point-mass per cluster, calc_weight(t) - the same quantity
-        # the algorithm checks against mu*beta to decide potential vs.
-        # outlier). This is continuous rather than a count ratio: a single
-        # fresh 1-point outlier cluster no longer counts as "one whole
-        # cluster" equal to an established 50-point cluster, it counts as
-        # roughly 1 point of mass out of however many total. It stays purely
-        # inside DenStream's own bookkeeping, independent of the
-        # silhouette-based quality signal (which uses pairwise distances over
-        # the window) and of the label-based purity/ARI/NMI metrics.
+        # Share of the total micro-cluster weight held by o-micro-clusters.
         p_weight = sum(mc.calc_weight(t) for mc in p_mcs.values())
         o_weight = sum(mc.calc_weight(t) for mc in o_mcs.values())
         total_weight = p_weight + o_weight
@@ -374,23 +342,15 @@ class StreamClusterer:
         return metrics_dict
 
     def ease_decaying_factor(self, target: float, rate: float = 0.9) -> None:
-        """After a model swap: brings a decaying factor raised by NSGA-II back
-        down towards the system's initial value, by `rate` per batch (as in
-        the thesis 2 experiment). Never raises it."""
+        """Lowers a decaying factor raised by a swap back towards `target`,
+        by `rate` per batch."""
         current = self.model.decaying_factor
         if current > target:
             self.model.decaying_factor = max(target, current * rate)
 
     def warm_start(self, embeddings: Union[np.ndarray, List[List[float]]]) -> None:
-        """
-        Trains the current model on a buffer of documents before it starts
-        serving the stream: the documents are absorbed by DenStream, the
-        micro-clusters are grouped into macro-clusters, and the evaluation
-        state (window, centroid history) starts empty, so nothing from the
-        buffer is scored. Used both at the start of a stream (on the IPCA
-        warm-up documents) and after a model swap (on the swap buffer), so a
-        model always starts the same way.
-        """
+        """Trains the model on a buffer before it serves the stream, at the
+        start of the stream and after every swap. The buffer is not scored."""
         for x, _ in stream.iter_array(np.asarray(embeddings, dtype=np.float32)):
             self.model.learn_one(x)
         self._cluster_offline(n_macro_clusters=self.expected_macro_clusters)
@@ -400,9 +360,7 @@ class StreamClusterer:
         self.window_true_labels.clear()
         self.n_samples_seen = 0
         self.last_batch_noise_ratio = 0.0
-        # Centroid shift is measured against the model's own history only -
-        # after a swap, comparing with the old model's centroids would read as
-        # a huge, spurious "shift" caused by the swap itself.
+        # Otherwise the swap itself would register as a centroid shift.
         self.centroid_history.clear()
         self.centroid_history.append(self._compute_macro_centroids())
 
@@ -425,8 +383,6 @@ class StreamClusterer:
         self.warm_start(window_data)
 
         logger.info(
-            f"Model Hot-Swapped with fresh window-trained instance: "
-            f"epsilon={eps}, mu={mu}, decay={decay} | "
-            f"Active Micro-Clusters: {len(self.model.p_micro_clusters)}, "
-            f"Macro-Clusters: {self.n_macro_clusters}"
+            f"Model swapped: epsilon={eps}, mu={mu}, decay={decay} | "
+            f"p-micro-clusters: {len(self.model.p_micro_clusters)}, macro-clusters: {self.n_macro_clusters}"
         )

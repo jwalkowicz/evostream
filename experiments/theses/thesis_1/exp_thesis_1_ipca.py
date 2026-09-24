@@ -1,20 +1,12 @@
 """
-Thesis 1 experiment: SBERT + IPCA vs. full-dimensional SBERT in the DenStream
-online phase - clustering quality vs. per-document processing time.
+Thesis 1 experiment: clustering quality and per-document time of DenStream
+on full SBERT embeddings vs. IPCA projections of several dimensions.
 
-The environment mirrors thesis 2 so the two experiments are directly
-comparable: the same phase-1 document stream (6 categories, 5000 documents,
-same cleaning, shuffle and SBERT embeddings), the same batch size, the same
-IPCA warmup and the same DenStream settings from config.
-
-Every dimensionality is run over one shared epsilon grid and reported at its
-best epsilon, so no variant is judged at a value tuned for another one.
-Each configuration is repeated on several shuffled orders of the stream
-(STREAM_SEEDS), and results are reported as mean +/- std across orders.
-
-The micro-cluster radius formula is selectable (--radius), see
-src/domain/clustering.py and https://github.com/online-ml/river/issues/2004.
-Each formula writes its own result files.
+Uses the first phase of the thesis 2 stream with the same settings. Every
+dimension runs over the same epsilon grid and is reported at its best
+epsilon; each configuration is repeated on several stream orders
+(STREAM_SEEDS). --radius selects the micro-cluster radius formula
+(river's or the corrected one, see src/domain/clustering.py).
 """
 
 import argparse
@@ -45,8 +37,7 @@ RESULTS_DIR = "experiments/theses/thesis_1/results"
 # None = full 384-dimensional SBERT embeddings, no projection.
 PCA_DIMS: List[Optional[int]] = [None, 128, 64, 32, 16, 8]
 EPSILON_GRID = [0.05, 0.10, 0.20, 0.30, 0.50]
-# Each seed shuffles the stream differently, which also changes the documents
-# IPCA is fitted on - the spread across seeds is the run-to-run noise.
+# Each seed gives a different document order (and so a different warm-up sample).
 STREAM_SEEDS = [0, 1, 2]
 SBERT_TIMING_SAMPLE = 500
 

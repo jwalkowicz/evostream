@@ -26,7 +26,7 @@ def get_db_admin():
 
 @app.command(name="setup")
 def setup_command():
-    """Initialize system infrastructure (Kafka topics, etc.)"""
+    """Create the Kafka topics and database tables."""
     typer.echo("Initializing setup...")
     stream_admin = StreamAdmin(bootstrap_servers=config.kafka.bootstrap_servers)
     storage_admin = get_db_admin()
@@ -89,10 +89,7 @@ def run_daemon_command(
     use_pca: bool = typer.Option(config.ml.use_pca),
     pca_dim: int = typer.Option(config.ml.pca_components_num),
 ):
-    """
-    Core clustering daemon.
-    Performs preprocessing + online embedding transformation + two-phase stream clustering.
-    """
+    """Run the clustering daemon."""
     typer.echo(f"Starting clustering daemon (use_pca={use_pca}, pca_dim={pca_dim})...")
 
     consumer = StreamConsumer(
@@ -148,7 +145,7 @@ def run_ui_command():
 
 @app.command(name="benchmark-thesis-1")
 def benchmark_thesis_1_command():
-    """Run Thesis 1 benchmark: SBERT + IPCA vs Full Dimensionality."""
+    """Run the thesis 1 experiment."""
     from experiments.theses.thesis_1.exp_thesis_1_ipca import main as run_exp1
 
     run_exp1()
@@ -156,7 +153,7 @@ def benchmark_thesis_1_command():
 
 @app.command(name="benchmark-thesis-2")
 def benchmark_thesis_2_command():
-    """Run Thesis 2 benchmark: NSGA-II Reactive Concept Drift Self-Adaptation."""
+    """Run the thesis 2 experiment."""
     from experiments.theses.thesis_2.exp_thesis_2_drift import run_drift_experiment
 
     run_drift_experiment()
@@ -164,7 +161,7 @@ def benchmark_thesis_2_command():
 
 @app.command(name="benchmark-thesis-3")
 def benchmark_thesis_3_command():
-    """Run Thesis 3 benchmark: Multi-Objective Pareto Front & Compromise Solution Analysis."""
+    """Run the thesis 3 experiment."""
     from experiments.theses.thesis_3.exp_thesis_3_pareto import main as run_pareto_analysis
 
     run_pareto_analysis()

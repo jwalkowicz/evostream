@@ -18,9 +18,7 @@ class TablePrototype:
 
 
 class InfrastructureSetup:
-    """
-    Orchestrates the initialization of all required infrastructure components.
-    """
+    """Creates the Kafka topics and database tables."""
 
     def __init__(self, messaging_admin, storage_admin):
         self.messaging_admin = messaging_admin

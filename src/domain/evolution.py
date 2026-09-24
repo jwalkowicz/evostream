@@ -70,10 +70,7 @@ def evaluate_parameters(
             beta=config.denstream.beta,
             n_samples_init=n_samples_init,
         )
-        # River's micro-clusters keep a reference to the dict they were
-        # created from and add later points into it, so each candidate gets
-        # its own copies - otherwise it would corrupt the shared buffer for
-        # every candidate evaluated after it.
+        # River modifies the dicts it learns from, so every candidate gets copies.
         for row in dict_buffer:
             model.learn_one(dict(row))
 
@@ -90,19 +87,12 @@ def evaluate_parameters(
         complexity = n_micro / len(dict_buffer) + 0.05 * float(np.log1p(n_micro / n_macro_clusters))
         return quality, complexity, n_micro
     except Exception:
-        # Fallback penalty for parameters the model cannot run with
         return -1.0, 1.0, 0
 
 
 class StreamClusteringOptimizationProblem(ElementwiseProblem):
-    """
-    Multi-objective optimization problem for streaming text clustering.
-    2D chromosome: theta = (epsilon, decaying_factor) in R^2.
-
-    Objectives (both minimised by pymoo): f1 = -quality, f2 = complexity,
-    as computed by evaluate_parameters() - candidates are scored with the
-    same offline phase the system deploys.
-    """
+    """Chromosome (epsilon, decaying_factor); objectives minimised by pymoo:
+    -quality and complexity from evaluate_parameters()."""
 
     def __init__(
         self,
@@ -203,11 +193,8 @@ class NSGAIIOptimizer:
         }
 
     def select_compromise_solution(self, pareto_front: List[Individual]) -> Individual:
-        """
-        Selects the compromise solution from the Pareto front with the
-        pseudo-weights method (pymoo): the solution whose pseudo-weight vector
-        is closest to equal weights for both objectives.
-        """
+        """Compromise solution: the pseudo-weight vector closest to equal
+        weights for both objectives."""
         if len(pareto_front) == 0:
             return Individual(params=self._get_fallback_params())
         if len(pareto_front) <= 2:
@@ -224,9 +211,7 @@ class NSGAIIOptimizer:
         data_buffer: np.ndarray,
         current_params: Optional[Dict[str, float]] = None,
     ) -> Tuple[Individual, List[Individual], List[Dict[str, Any]]]:
-        """
-        Executes NSGA-II multi-objective evolution on the data buffer.
-        """
+        """Runs NSGA-II on the buffer; returns the compromise, the Pareto front and the history."""
         t_start = time.perf_counter()
 
         if len(data_buffer) < self.min_eval_buffer:
