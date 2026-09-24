@@ -39,18 +39,9 @@ class KafkaConsumer(BaseModel):
 
 class DatasetSettings(BaseModel):
     name: str = "20newsgroups"
-    categories_concept_a: list[str] = ["sci.space", "sci.med", "rec.autos"]
-    categories_concept_b: list[str] = [
-        "rec.sport.baseball",
-        "comp.sys.ibm.pc.hardware",
-        "talk.politics.mideast",
-    ]
-    categories_concept_c: list[str] = [
-        "comp.graphics",
-        "soc.religion.christian",
-        "sci.crypt",
-    ]
-    max_samples_per_concept: int = 1000
+    categories_concept_a: list[str]
+    categories_concept_b: list[str]
+    max_samples_per_concept: int = 5000
     text_column: str = "text"
 
 

@@ -15,10 +15,10 @@ kafka:
 
 dataset:
   name: "20newsgroups"
-  categories_concept_a: ["sci.space", "sci.med", "rec.autos"]
-  categories_concept_b: ["rec.sport.baseball", "comp.sys.ibm.pc.hardware", "talk.politics.mideast"]
-  categories_concept_c: ["comp.graphics", "soc.religion.christian", "sci.crypt"]
-  max_samples_per_concept: 1000
+  # the two topic sets of the thesis 2 stream
+  categories_concept_a: ["sci.space", "sci.med", "rec.autos", "sci.electronics", "comp.graphics", "sci.crypt"]
+  categories_concept_b: ["rec.sport.baseball", "comp.sys.ibm.pc.hardware", "talk.politics.mideast", "rec.sport.hockey", "rec.motorcycles", "talk.politics.guns"]
+  max_samples_per_concept: 5000
   text_column: "text"
 
 ml:

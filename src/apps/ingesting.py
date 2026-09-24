@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from sklearn.datasets import fetch_20newsgroups
 
+from src.core.config import config
 from src.core.logger import logger
 
 
@@ -16,7 +17,6 @@ class IngesterPrototype:
     batch_size: int = 64
     batch_interval: float = 0.5
     drift_step: int = 3000
-    drift_type: str = "sudden"
 
 
 class IngesterApp:
@@ -55,29 +55,21 @@ class IngesterApp:
         signal.signal(signal.SIGINT, self.handle_shutdown)
         signal.signal(signal.SIGTERM, self.handle_shutdown)
 
-        phase1_categories = ["sci.space", "sci.med", "rec.autos"]
-        phase1_data = self._load_data_with_labels(phase1_categories)
-
-        phase2_categories = [
-            "rec.sport.baseball",
-            "comp.sys.ibm.pc.hardware",
-            "talk.politics.mideast",
-        ]
-        phase2_data = self._load_data_with_labels(phase2_categories)
+        phase1_data = self._load_data_with_labels(config.dataset.categories_concept_a)
+        phase2_data = self._load_data_with_labels(config.dataset.categories_concept_b)
 
         logger.info(f"Starting ingestion stream to topic '{self.prototype.topic}'...")
         drift_logged = False
 
         try:
             while self.running:
-                if self.prototype.drift_type == "sudden":
-                    if self.message_count < self.prototype.drift_step:
-                        current_pool = phase1_data
-                    else:
-                        if not drift_logged:
-                            logger.warning(f"Concept drift triggered at message count {self.message_count}")
-                            drift_logged = True
-                        current_pool = phase2_data
+                if self.message_count < self.prototype.drift_step:
+                    current_pool = phase1_data
+                else:
+                    if not drift_logged:
+                        logger.warning(f"Topic change at message {self.message_count}")
+                        drift_logged = True
+                    current_pool = phase2_data
 
                 batch = []
                 for _ in range(self.prototype.batch_size):

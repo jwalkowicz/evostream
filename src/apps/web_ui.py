@@ -22,16 +22,19 @@ from src.domain.drift import UnsupervisedDriftDetector
 from src.domain.evolution import NSGAIIOptimizer
 from src.domain.preprocessing import StreamProjector, TextPreprocessor
 
+# The two topic sets of the thesis 2 stream; "Wymuś nagły dryf" switches between them.
 CONCEPTS = {
-    "A": ("Koncept A: nauka i motoryzacja", config.dataset.categories_concept_a),
-    "B": ("Koncept B: sport, IT i polityka", config.dataset.categories_concept_b),
-    "C": ("Koncept C: grafika, religia i kryptografia", config.dataset.categories_concept_c),
+    "A": ("Tematy przed zmianą (faza 1)", config.dataset.categories_concept_a),
+    "B": ("Tematy po zmianie (faza 2)", config.dataset.categories_concept_b),
 }
-NEXT_CONCEPT = {"A": "B", "B": "C", "C": "A"}
+NEXT_CONCEPT = {"A": "B", "B": "A"}
 N_MACRO_CLUSTERS = len(config.dataset.categories_concept_a)
 BATCH_SIZE = config.ml.batch_size
 WINDOW = config.denstream.window_size
 STREAM_DELAY_S = 0.2
+# Starting epsilon of the demo: on the thesis 2 stream it detects the topic change
+# after 6 batches, wherever the change is forced (no alarm before it at any epsilon).
+START_EPSILON = 0.05
 MACRO_COLORS = ["#8e44ad", "#2980b9", "#27ae60", "#d35400", "#c0392b", "#f39c12", "#16a085", "#2c3e50"]
 NOISE_COLOR = "#e74c3c"
 
@@ -74,7 +77,7 @@ def reset_state() -> None:
     state.projector = StreamProjector(n_components=config.ml.pca_components_num)
     state.projector.fit(warmup)
     state.clusterer = StreamClusterer(
-        epsilon=config.denstream.epsilon,
+        epsilon=START_EPSILON,
         mu=config.denstream.mu,
         beta=config.denstream.beta,
         decaying_factor=config.denstream.decaying_factor,
@@ -197,7 +200,7 @@ def render_sidebar() -> bool:
     state = st.session_state
     sidebar = st.sidebar
     name, categories = CONCEPTS[state.concept]
-    sidebar.markdown(f"**Aktywny koncept:** {name}")
+    sidebar.markdown(f"**Aktywne tematy:** {name}")
     sidebar.markdown("\n".join(f"- `{c}`" for c in categories))
     sidebar.divider()
 

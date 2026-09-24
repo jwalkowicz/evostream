@@ -60,19 +60,16 @@ def ingest_command(
     batch_size: int = typer.Option(config.kafka.batch_size),
     interval: float = typer.Option(0.5),
     drift_step: int = typer.Option(3000),
-    drift_type: str = typer.Option("sudden"),
 ):
-    """Start the data ingestion process."""
-    typer.echo(f"Starting ingestion (drift_type={drift_type}, drift_step={drift_step})...")
+    """Send documents to Kafka, switching topics after drift_step messages."""
+    typer.echo(f"Starting ingestion (topic change after {drift_step} messages)...")
     producer = StreamProducer(bootstrap_servers=config.kafka.bootstrap_servers)
     prototype = IngesterPrototype(
         topic=config.kafka.topic.raw_messages,
         text_column=config.dataset.text_column,
-        label_column=config.kafka.event.text_column if hasattr(config.kafka.event, "label_column") else "label",
         batch_size=batch_size,
         batch_interval=interval,
         drift_step=drift_step,
-        drift_type=drift_type,
     )
     app_instance = IngesterApp(producer=producer, prototype=prototype)
     app_instance.run()
