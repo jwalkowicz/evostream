@@ -22,7 +22,6 @@ from src.domain.clustering import StreamClusterer
 from src.domain.drift import UnsupervisedDriftDetector
 from src.domain.evolution import NSGAIIOptimizer
 from src.domain.preprocessing import StreamProjector, TextPreprocessor
-from src.model.schemas import CLUSTERING_RESULTS_SCHEMA, MODEL_PARAMETERS_SCHEMA
 
 # Page setup
 st.set_page_config(

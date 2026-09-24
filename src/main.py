@@ -137,6 +137,7 @@ def run_daemon_command(
 
 @app.command(name="ui")
 def run_ui_command():
+    """Run the Streamlit demo panel."""
     import subprocess
     import sys
 
@@ -165,11 +166,6 @@ def benchmark_thesis_3_command():
     from experiments.theses.thesis_3.exp_thesis_3_pareto import main as run_pareto_analysis
 
     run_pareto_analysis()
-
-
-@app.command(name="hello")
-def hello_command():
-    typer.echo("Hello evoStream!")
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 [project]
-name = "evostream-ga-sentiment"
+name = "evostream"
 version = "0.1.0"
-description = "Add your description here"
+description = "Stream clustering of text with drift detection and NSGA-II parameter adaptation"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
