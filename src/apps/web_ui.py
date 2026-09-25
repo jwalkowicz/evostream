@@ -337,6 +337,7 @@ def render_cluster_view() -> None:
 
 
 def line_chart(df: pd.DataFrame, series: dict[str, str], title: str, threshold: float | None = None) -> go.Figure:
+    """All charts share fixed margins, x range and a legend above the plot, so they line up."""
     fig = go.Figure()
     for column, name in series.items():
         fig.add_trace(go.Scatter(x=df["docs"], y=df[column], mode="lines", name=name))
@@ -346,21 +347,36 @@ def line_chart(df: pd.DataFrame, series: dict[str, str], title: str, threshold: 
         fig.add_vline(x=docs, line_dash="dash", line_color="red")
     for docs in st.session_state.detected_drifts:
         fig.add_vline(x=docs, line_dash="dot", line_color="#8e44ad")
-    fig.update_layout(separators=", ", title=title, height=280, xaxis_title="Przetworzone dokumenty", margin=dict(t=40))
+    fig.update_layout(
+        separators=", ",
+        title=title,
+        height=280,
+        margin=dict(l=70, r=20, t=60, b=40),
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="right", x=1),
+        xaxis=dict(title="Przetworzone dokumenty", range=[0, df["docs"].max()], tickformat=",d"),
+        yaxis=dict(automargin=False),
+    )
     return fig
 
 
-def render_notes() -> None:
+def render_legend_and_notes() -> None:
     lookback = st.session_state.clusterer.centroid_shift_lookback_batches
+    with st.container(border=True):
+        st.markdown("**Legenda**")
+        st.markdown(
+            f"""- Czerwona linia przerywana – wymuszony dryf.
+- Fioletowa linia kropkowana – dryf wykryty przez detektor.
+- Czarna linia przerywana – próg przesunięcia centroidów (δc = {fmt(config.drift.centroid_shift_threshold, 2)})."""
+        )
     with st.container(border=True):
         st.markdown("**Uwaga**")
         st.markdown(
-            f"""1. Czerwona linia przerywana – wymuszony dryf.
-2. Fioletowa linia kropkowana – dryf wykryty przez detektor.
-3. Po wymianie modelu przesunięcie centroidów liczone jest od nowa – przez {lookback} partii brak wartości.
-4. Tuż po zmianie tematów próg względny sylwetki może spaść poniżej zera: w oknie historii są wartości sprzed
-   i po zmianie, więc odchylenie standardowe rośnie.
-5. Po wymianie mogą pojawić się kolejne alarmy – nowy model jeszcze się stabilizuje."""
+            f"""1. Po wymianie modelu przesunięcie centroidów liczone jest od nowa, dlatego przez pierwsze {lookback} partii
+   danych nie ma wartości.
+2. Tuż po zmianie tematów próg względny sylwetki może spaść poniżej zera. Odchylenie standardowe rośnie, ponieważ
+   w oknie historii są wartości sprzed i po zmianie.
+3. Jeśli po wymianie pojawiają się kolejne alarmy – model się stabilizuje."""
         )
 
 
@@ -405,7 +421,7 @@ with cluster_tab:
 with telemetry_tab:
     charts, notes = st.columns([3, 1])
     with notes:
-        render_notes()
+        render_legend_and_notes()
     with charts:
         if st.session_state.history:
             render_telemetry_view()
