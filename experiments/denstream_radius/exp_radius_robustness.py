@@ -1,8 +1,5 @@
-"""
-Reruns the thesis 1 simulation with river's radius formula and with the
-corrected one, for every dimension, epsilon and stream order. Runs are
-parallel processes, so the timings here are only indicative.
-"""
+# Reruns the thesis 1 simulation with river's radius formula and with the
+# corrected one, for every dimension, epsilon and stream order.
 
 import argparse
 import itertools
@@ -43,8 +40,6 @@ def run_one(seed: int, radius: str, pca_dim: int | None, epsilon: float) -> dict
 
 
 def best_epsilon_table(runs: pd.DataFrame) -> pd.DataFrame:
-    """Per (radius, dimension): the epsilon with the best purity averaged
-    over seeds, with mean and std across seeds at that epsilon."""
     by_eps = (
         runs.groupby(["radius", "pca_dim", "epsilon"])
         .agg(

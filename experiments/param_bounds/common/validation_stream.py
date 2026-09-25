@@ -1,8 +1,6 @@
-"""
-Validation stream for the search-space bounds (thesis section 3.4): eight
-20 Newsgroups categories not used by any thesis experiment, four before and
-four after an abrupt topic change, prepared the same way as the thesis stream.
-"""
+# Validation stream for the search-space bounds (thesis section 3.4): eight
+# 20 Newsgroups categories not used by any thesis experiment, four before and
+# four after an abrupt topic change, prepared the same way as the thesis stream.
 
 import os
 import pickle
@@ -32,8 +30,6 @@ EMBEDDINGS_CACHE_PATH = f"{CACHE_DIR}/validation_embeddings.npy"
 
 
 def load_validation_stream() -> tuple[np.ndarray, list[str]]:
-    """Both phases of the validation stream (SBERT embeddings and category
-    labels), cached after the first call."""
     if os.path.exists(DATASET_CACHE_PATH):
         with open(DATASET_CACHE_PATH, "rb") as f:
             texts, labels = pickle.load(f)

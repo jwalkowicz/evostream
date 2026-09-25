@@ -1,8 +1,5 @@
-"""
-Runs the thesis 2 sweep over starting (epsilon, decaying_factor) and
-regenerates the figures. Each run gets its own process, so the results do
-not depend on the number of workers.
-"""
+# Runs the thesis 2 sweep over starting (epsilon, decaying_factor) and
+# regenerates the figures.
 
 import argparse
 import itertools
@@ -16,7 +13,6 @@ from experiments.theses.thesis_2.exp_thesis_2_drift import (
 from experiments.theses.thesis_2.plot_thesis_2_drift import main as generate_all_plots
 from src.core.logger import logger
 
-# Two corners of the grid, for a quick check before the full sweep.
 QUICK_COMBOS: list[tuple[float, float]] = [(0.10, 0.005), (0.40, 0.08)]
 
 DEFAULT_WORKERS = 4
@@ -34,7 +30,6 @@ def main():
     parser.add_argument(
         "--quick",
         action="store_true",
-        help="Run only the small QUICK_COMBOS validation set instead of the full 5x5 grid.",
     )
     parser.add_argument("--skip-plots", action="store_true")
     args = parser.parse_args()
@@ -48,7 +43,7 @@ def main():
         futures = {pool.submit(run_combo, eps, decay): (eps, decay) for eps, decay in combos}
         for future in as_completed(futures):
             eps, decay = futures[future]
-            future.result()  # re-raises on failure, with the (eps, decay) known above
+            future.result()
 
     print("\nAll simulations finished.")
 

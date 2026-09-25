@@ -1,4 +1,4 @@
-"""Thesis 2 experiment: static vs. adaptive DenStream on a stream with an abrupt topic change."""
+# Thesis 2 experiment: static vs. adaptive DenStream on a stream with an abrupt topic change
 
 import argparse
 import copy
@@ -24,8 +24,7 @@ RESULTS_DIR = "experiments/theses/thesis_2/results"
 DATASET_CACHE_PATH = f"{RESULTS_DIR}/cached_dataset.pkl"
 EMBEDDINGS_CACHE_PATH = f"{RESULTS_DIR}/cached_embeddings.npy"
 
-# Two disjoint sets of six categories; the stream switches from the first
-# to the second after SAMPLES_PER_PHASE documents.
+# Two disjoint sets of six categories
 PHASE1_CATEGORIES = [
     "sci.space",
     "sci.med",
@@ -84,7 +83,6 @@ def create_dataset_stream(
 
 
 def _load_or_build_dataset() -> tuple[list[str], list[str]]:
-    """Cleaned texts and labels of the whole stream, cached after the first call."""
     if os.path.exists(DATASET_CACHE_PATH):
         with open(DATASET_CACHE_PATH, "rb") as f:
             return pickle.load(f)
@@ -168,8 +166,7 @@ def run_drift_experiment(initial_eps: float = 0.10, initial_decay: float = 0.005
     records = []
     collecting_for_hotswap = False
     hotswap_buffer_collected_raw: list[np.ndarray] = []
-    # The swap is triggered only by the detector; DRIFT_POINT is used for
-    # evaluation and plots, never by the system.
+
     trigger_sample_idx: int | None = None  # first alarm
     swap_sample_idx: int | None = None  # first deployed replacement model
 

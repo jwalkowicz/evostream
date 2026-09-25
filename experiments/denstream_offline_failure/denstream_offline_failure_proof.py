@@ -1,4 +1,4 @@
-"""Why DenStream's native offline phase (DBSCAN over p-micro-cluster centres) fails here (thesis section 2.3.2)."""
+# Why DenStream's native offline phase (DBSCAN over p-micro-cluster centres) fails here (thesis section 2.3.2)
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -36,7 +36,6 @@ def main():
         batch = normalize(ipca.transform(embeddings[start : start + BATCH_SIZE]))
         for x, _ in stream.iter_array(batch):
             model.learn_one(x)
-        # predict_one runs river's own offline phase and fills model.clusters.
         model.predict_one(dict(enumerate(batch[-1])))
 
         _, centers = micro_cluster_centers(model)

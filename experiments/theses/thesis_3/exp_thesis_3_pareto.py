@@ -1,4 +1,4 @@
-"""Thesis 3 experiment: Pareto fronts and compromise solutions of NSGA-II for several projection dimensions."""
+# Thesis 3 experiment: Pareto fronts and compromise solutions of NSGA-II for several projection dimensions
 
 import argparse
 import itertools
@@ -31,12 +31,10 @@ RESULTS_DIR = "experiments/theses/thesis_3/results"
 PCA_DIMS = [8, 16, 32, 64, 128]
 PHASES = [1, 2]
 N_MACRO_CLUSTERS = len(PHASE1_CATEGORIES)
-EXAMPLE_RUN = (1, STREAM_SEEDS[0])  # (phase, seed) shown in the Pareto-front figure
+EXAMPLE_RUN = (1, STREAM_SEEDS[0])
 
 
 def load_buffer(phase: int, seed: int) -> tuple[np.ndarray, list[str]]:
-    """HOTSWAP_BUFFER_SIZE consecutive documents of one stream phase, after
-    shuffling that phase with the given seed."""
     texts, labels = _load_or_build_dataset()
     embeddings = _load_or_compute_embeddings(texts)
     start = (phase - 1) * SAMPLES_PER_PHASE
@@ -46,8 +44,6 @@ def load_buffer(phase: int, seed: int) -> tuple[np.ndarray, list[str]]:
 
 
 def score_against_labels(params: dict, buffer: np.ndarray, labels: list[str]) -> tuple[float, float]:
-    """Purity and NMI of a DenStream model with the given parameters, trained
-    on the buffer the same way as in a model swap."""
     clusterer = StreamClusterer(expected_macro_clusters=N_MACRO_CLUSTERS, window_size=len(buffer))
     clusterer.hot_swap_model(new_params=params, window_data=buffer)
     preds = [clusterer.predict_one(x) for x, _ in stream.iter_array(buffer)]
@@ -77,8 +73,6 @@ def run_one(pca_dim: int, phase: int, seed: int) -> tuple[list[dict], dict]:
     compromise, front, _ = optimizer.evolve(data_buffer=buffer)
     optimization_s = time.perf_counter() - t0
 
-    # Parameters are rounded to 4 decimals, so distinct front members can
-    # coincide - keep one of each.
     unique_front = list({(ind.params["epsilon"], ind.params["decaying_factor"]): ind for ind in front}.values())
 
     run_id = {"pca_dim": pca_dim, "phase": phase, "seed": seed}
@@ -128,8 +122,6 @@ def run_one(pca_dim: int, phase: int, seed: int) -> tuple[list[dict], dict]:
 
 
 def aggregate_by_dimension(runs: pd.DataFrame) -> pd.DataFrame:
-    """Mean and std of the compromise solution across all repetitions
-    (both phases x all seeds) for each dimension."""
     metrics = [
         "front_size",
         "epsilon",

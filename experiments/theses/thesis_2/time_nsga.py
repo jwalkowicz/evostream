@@ -1,8 +1,3 @@
-"""
-Time of one NSGA-II run at d = 16 on a 500-document buffer, measured with
-nothing else running (the "ok. 11 s" in thesis sections 2.1, 3.5 and 4.2).
-"""
-
 import time
 
 from sklearn.decomposition import IncrementalPCA

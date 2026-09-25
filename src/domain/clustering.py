@@ -20,8 +20,7 @@ _RIVER_CALC_RADIUS = DenStreamMicroCluster.calc_radius
 
 
 def _rms_radius(self: DenStreamMicroCluster, timestamp: int) -> float:
-    """Micro-cluster radius as defined by Cao et al. (2006); river's formula underestimates it
-    (https://github.com/online-ml/river/issues/2004)."""
+    """Micro-cluster radius as defined by Cao et al. (2006)"""
     fading = self.fading_function(timestamp - self.last_edit_time)
     weight = self._weight(fading)
     mean_sq_norm = sum(fading * ss for ss in self.squared_sum.values()) / weight
@@ -302,8 +301,8 @@ class StreamClusterer:
         return metrics_dict
 
     def ease_decaying_factor(self, target: float, rate: float = 0.9) -> None:
-        """Lowers a decaying factor raised by a swap back towards `target`,
-        by `rate` per batch."""
+        """Lowers a decaying factor raised by a swap back towards target,
+        by rate per batch."""
         current = self.model.decaying_factor
         if current > target:
             self.model.decaying_factor = max(target, current * rate)

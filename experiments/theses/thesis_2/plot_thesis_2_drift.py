@@ -1,4 +1,4 @@
-"""Figures for the thesis 2 sweep, drawn from the per-run CSVs."""
+# Figures for the thesis 2 sweep, drawn from the per-run CSVs
 
 import os
 
@@ -80,7 +80,6 @@ def _base_legend_handles() -> list:
 
 
 def _detection_counts(dfs: dict[tuple[float, float], pd.DataFrame]) -> dict[float, int]:
-    """Number of runs whose detector fired at each sample_idx."""
     counts: dict[float, int] = {}
     for df in dfs.values():
         if "drift_detected" not in df.columns:
@@ -91,7 +90,6 @@ def _detection_counts(dfs: dict[tuple[float, float], pd.DataFrame]) -> dict[floa
 
 
 def _plot_detection_density(ax, dfs: dict[tuple[float, float], pd.DataFrame]):
-    """Strip below the main chart: number of runs raising an alarm per batch."""
     ax.axvspan(0, WARMUP_END, color=WARMUP_COLOR, alpha=0.9, zorder=0)
     ax.axvline(DRIFT_POINT, color=DRIFT_LINE_COLOR, linestyle=(0, (1, 1)), lw=1.8, zorder=1)
     ax.set_xlim(0, STREAM_LENGTH)
@@ -119,7 +117,6 @@ def plot_metric_band(
     y_lim: tuple[float, float] | None = None,
     threshold: float | None = None,
 ):
-    """Mean line and min-max band over all runs, static and adaptive overlaid."""
     hot_stack = pd.concat([df.set_index("sample_idx")[hot_col] for df in dfs.values()], axis=1)
     x = hot_stack.index
 
@@ -137,7 +134,6 @@ def plot_metric_band(
     if threshold is not None:
         ax.axhline(threshold, color="red", linestyle="--", lw=1.6, zorder=1)
 
-    # Translucent fill with an opaque edge, so overlapping bands stay readable.
     if static_col:
         static_stack = pd.concat([df.set_index("sample_idx")[static_col] for df in dfs.values()], axis=1)
         ax.fill_between(

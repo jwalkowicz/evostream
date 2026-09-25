@@ -1,4 +1,4 @@
-"""Search-space bounds for epsilon on the validation stream (thesis section 3.4)."""
+# Search-space bounds for epsilon on the validation stream (thesis section 3.4)
 
 import argparse
 import itertools

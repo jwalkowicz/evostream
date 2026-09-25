@@ -1,5 +1,4 @@
-"""Thesis 1 experiment: quality and time of DenStream on full SBERT embeddings vs. IPCA projections.
---radius selects river's or the corrected micro-cluster radius."""
+# Thesis 1 experiment: quality and time of DenStream on full SBERT embeddings vs. IPCA projections.
 
 import argparse
 import time
@@ -27,10 +26,10 @@ from src.domain.clustering import StreamClusterer, set_river_radius_fix
 
 RESULTS_DIR = "experiments/theses/thesis_1/results"
 
-# None = full 384-dimensional SBERT embeddings, no projection.
 PCA_DIMS: list[int | None] = [None, 128, 64, 32, 16, 8]
 EPSILON_GRID = [0.05, 0.10, 0.20, 0.30, 0.50]
-# Each seed gives a different document order (and so a different warm-up sample).
+
+# Each seed gives a different document order
 STREAM_SEEDS = [0, 1, 2]
 SBERT_TIMING_SAMPLE = 500
 

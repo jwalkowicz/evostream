@@ -1,5 +1,4 @@
-"""Search-space bounds for lambda on the validation stream, which switches topics after 3000 documents
-(thesis section 3.4). The half-life of an unused micro-cluster is 100 / lambda documents."""
+# Search-space bounds for lambda on the validation stream, which switches topics after 3000 documents (thesis section 3.4)
 
 import argparse
 import itertools
@@ -31,8 +30,7 @@ SURVIVAL_CHECKPOINTS = [500, 1000, 2000, 3000]  # documents after the topic swit
 
 
 def load_drift_stream(seed: int):
-    """Both phases of the validation stream, each shuffled with the seed; the
-    topic switch stays at document SAMPLES_PER_PHASE."""
+    """Both phases of the validation stream."""
     embeddings, labels = load_validation_stream()
     parts = [
         shuffle_stream(embeddings[start : start + SAMPLES_PER_PHASE], labels[start : start + SAMPLES_PER_PHASE], seed)
@@ -56,8 +54,7 @@ def run_one(seed: int, decay: float) -> tuple[dict, pd.DataFrame]:
     clusterer.warm_start(normalize(ipca.transform(embeddings[:INITIAL_WARMUP_SIZE])))
 
     records = []
-    # River copies a micro-cluster when it absorbs a point, so micro-clusters
-    # are tracked by creation time: "old" means created before the switch.
+    # micro-clusters are tracked by creation time
     switch_time = None
     n_old_at_switch = 0
     for start in range(INITIAL_WARMUP_SIZE, len(embeddings), BATCH_SIZE):
@@ -69,7 +66,7 @@ def run_one(seed: int, decay: float) -> tuple[dict, pd.DataFrame]:
             switch_time = clusterer.model.timestamp
             n_old_at_switch = len(alive)
         survivors = None
-        # Undefined when the model had already forgotten everything by the switch.
+        # Undefined when the model had already forgotten everything
         if n_old_at_switch and end > SAMPLES_PER_PHASE:
             survivors = sum(mc.creation_time < switch_time for mc in alive) / n_old_at_switch
         records.append(

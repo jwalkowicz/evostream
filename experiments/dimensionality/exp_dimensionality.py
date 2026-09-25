@@ -1,4 +1,4 @@
-"""Intrinsic dimension, explained variance and distance contrast of the SBERT embeddings (thesis section 3.3)."""
+# Explained variance and distance contrast of the SBERT embeddings (thesis section 3.3)
 
 import json
 
@@ -19,7 +19,7 @@ MARKED_DIM = 16
 
 
 def intrinsic_dimension_mle(X: np.ndarray, k1: int = 10, k2: int = 20) -> float:
-    """Levina-Bickel MLE, averaged over points and over k = k1..k2."""
+    """Levina-Bickel MLE"""
     distances, _ = NearestNeighbors(n_neighbors=k2 + 1).fit(X).kneighbors(X)
     distances = distances[:, 1:]  # drop each point's zero distance to itself
     estimates = []
