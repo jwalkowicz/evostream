@@ -319,7 +319,8 @@ class StreamClusterer:
         self.window_macro_preds.clear()
         self.window_true_labels.clear()
         self.n_samples_seen = 0
-        # Otherwise the swap itself would register as a centroid shift.
+        # Start the centroid history from this model. Comparing with the old model's centroids
+        # (a different model in a different IPCA space) would show the swap itself as a shift.
         self.centroid_history.clear()
         self.centroid_history.append(self._compute_macro_centroids())
 
