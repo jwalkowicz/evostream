@@ -26,7 +26,8 @@ class TextPreprocessor:
 
 
 class StreamProjector:
-    """IPCA projection of SBERT embeddings, frozen between model swaps; outputs are L2-normalised."""
+    """IPCA projection of SBERT embeddings. It is fitted once and not updated until the next model swap,
+    so new documents land in the same space as the existing micro-clusters. Outputs are L2-normalised."""
 
     def __init__(self, n_components: int | None):
         self.n_components = n_components
