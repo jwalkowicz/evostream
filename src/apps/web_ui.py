@@ -148,7 +148,7 @@ def next_batch() -> list[tuple[str, str]]:
     return batch
 
 
-def process_batch(adaptation_enabled: bool) -> None:
+def process_batch(adaptation_enabled: bool, status) -> None:
     state = st.session_state
     batch = next_batch()
     texts, labels = [text for text, _ in batch], [label for _, label in batch]
@@ -173,6 +173,7 @@ def process_batch(adaptation_enabled: bool) -> None:
     if state.collecting_for_swap:
         state.swap_buffer.extend(raw)
         if len(state.swap_buffer) >= config.evolution.hotswap_buffer_size:
+            status.info("Bufor pełny – optymalizacja NSGA-II i wymiana modelu...")
             with st.spinner("Optymalizacja NSGA-II..."):
                 swap_model(np.array(state.swap_buffer))
             state.collecting_for_swap = False
@@ -195,8 +196,8 @@ def process_batch(adaptation_enabled: bool) -> None:
     )
 
 
-def render_sidebar() -> bool:
-    """Controls; returns whether adaptation is enabled."""
+def render_sidebar():
+    """Controls; returns whether adaptation is enabled and a placeholder for the adaptation status."""
     state = st.session_state
     sidebar = st.sidebar
     name, categories = CONCEPTS[state.concept]
@@ -237,30 +238,41 @@ def render_sidebar() -> bool:
         st.rerun()
 
     sidebar.divider()
+    return adaptation_enabled, sidebar.empty()
+
+
+def render_status(status) -> None:
+    """Detector warm-up and swap-buffer progress, drawn after the batch has been processed."""
+    state = st.session_state
     warmup_steps = config.drift.centroid_shift_min_warmup_steps
     steps = state.detector.total_steps_seen
-    if steps < warmup_steps:
-        sidebar.caption(f"Rozgrzewka sygnału przesunięcia centroidów: {steps}/{warmup_steps} partii")
-    else:
-        sidebar.caption("Detektor dryfu aktywny (oba sygnały)")
-    if state.collecting_for_swap:
-        needed = config.evolution.hotswap_buffer_size
-        collected = len(state.swap_buffer)
-        sidebar.progress(min(1.0, collected / needed), text=f"Bufor wymiany modelu: {collected}/{needed}")
-    return adaptation_enabled
+    with status.container():
+        if steps < warmup_steps:
+            st.caption(f"Rozgrzewka sygnału przesunięcia centroidów: {steps}/{warmup_steps} partii")
+        else:
+            st.caption("Detektor dryfu aktywny (oba sygnały)")
+        if state.collecting_for_swap:
+            needed = config.evolution.hotswap_buffer_size
+            collected = len(state.swap_buffer)
+            st.progress(min(1.0, collected / needed), text=f"Bufor wymiany modelu: {collected}/{needed}")
 
 
 def render_metrics() -> None:
+    """Model size of the current model; quality and time of the last processed batch (as in the charts)."""
     state = st.session_state
     metrics = state.clusterer.get_metrics()
-    purity, silhouette = metrics["purity"], metrics["silhouette"]
+    last = state.history[-1] if state.history else {}
+
+    def value(key: str, digits: int) -> str:
+        return "–" if pd.isna(last.get(key, np.nan)) else fmt(last[key], digits)
+
     cols = st.columns(6)
     cols[0].metric("Przetworzone dokumenty", state.docs_processed)
     cols[1].metric("Mikroklastry", metrics["n_micro_clusters"])
     cols[2].metric("Makroklastry", metrics["n_macro_clusters"])
-    cols[3].metric("Czystość", "–" if pd.isna(purity) else fmt(purity, 3))
-    cols[4].metric("Wskaźnik sylwetki", "–" if pd.isna(silhouette) else fmt(silhouette, 3))
-    cols[5].metric("Czas [ms/dok.]", fmt(metrics["latency_ms_per_doc"], 2))
+    cols[3].metric("Czystość", value("purity", 3))
+    cols[4].metric("Wskaźnik sylwetki", value("silhouette", 3))
+    cols[5].metric("Czas [ms/dok.]", value("latency_ms", 2))
 
 
 def render_cluster_view() -> None:
@@ -338,12 +350,22 @@ def line_chart(df: pd.DataFrame, series: dict[str, str], title: str, threshold: 
     return fig
 
 
+def render_notes() -> None:
+    lookback = st.session_state.clusterer.centroid_shift_lookback_batches
+    with st.container(border=True):
+        st.markdown("**Uwaga**")
+        st.markdown(
+            f"""1. Czerwona linia przerywana – wymuszony dryf.
+2. Fioletowa linia kropkowana – dryf wykryty przez detektor.
+3. Po wymianie modelu przesunięcie centroidów liczone jest od nowa – przez {lookback} partii brak wartości.
+4. Tuż po zmianie tematów próg względny sylwetki może spaść poniżej zera: w oknie historii są wartości sprzed
+   i po zmianie, więc odchylenie standardowe rośnie.
+5. Po wymianie mogą pojawić się kolejne alarmy – nowy model jeszcze się stabilizuje."""
+        )
+
+
 def render_telemetry_view() -> None:
     df = pd.DataFrame(st.session_state.history)
-    st.caption(
-        "Czerwone linie – wymuszony dryf, fioletowe – dryf wykryty przez detektor. Po wymianie modelu "
-        f"przesunięcie centroidów jest liczone od nowa, więc przez {st.session_state.clusterer.centroid_shift_lookback_batches} partii nie ma wartości."
-    )
     st.plotly_chart(line_chart(df, {"purity": "Czystość"}, "Czystość"), width="stretch")
     st.plotly_chart(
         line_chart(
@@ -370,9 +392,10 @@ st.set_page_config(page_title="evostream", layout="wide")
 if "clusterer" not in st.session_state:
     reset_state()
 
-adaptation_enabled = render_sidebar()
+adaptation_enabled, status = render_sidebar()
 if st.session_state.streaming:
-    process_batch(adaptation_enabled)
+    process_batch(adaptation_enabled, status)
+render_status(status)
 
 st.title("evostream")
 render_metrics()
@@ -380,10 +403,14 @@ cluster_tab, telemetry_tab = st.tabs(["Mikroklastry i makroklastry", "Metryki i 
 with cluster_tab:
     render_cluster_view()
 with telemetry_tab:
-    if st.session_state.history:
-        render_telemetry_view()
-    else:
-        st.info("Brak danych – uruchom strumień w panelu bocznym.")
+    charts, notes = st.columns([3, 1])
+    with notes:
+        render_notes()
+    with charts:
+        if st.session_state.history:
+            render_telemetry_view()
+        else:
+            st.info("Brak danych – uruchom strumień w panelu bocznym.")
 
 if st.session_state.streaming:
     time.sleep(STREAM_DELAY_S)
